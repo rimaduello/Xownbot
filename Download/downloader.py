@@ -27,7 +27,7 @@ class Quality(TypedDict):
 class BaseDownloader(ABC):
     quality: Optional[Quality]
     qualities: List[Quality]
-    image_urls = []
+    image_urls: List
 
     def __init__(self, url):
         self.url = url
@@ -40,6 +40,7 @@ class BaseDownloader(ABC):
         self.base_bs4 = None
         self.qualities = []
         self.quality = None
+        self.image_urls = []
 
     async def prepare(self):
         logger.info(f"preparing for {self.url}")
