@@ -30,6 +30,6 @@ jobs:
         with:
           push: true
           pull: true
-          tags: ${{ secrets.DOCKERHUB_TAG }}:$RELEASE_VERSION,${{ secrets.DOCKERHUB_TAG }}:latest
+          tags: ${{ secrets.DOCKERHUB_TAG }}:${{ env.RELEASE_VERSION }},${{ secrets.DOCKERHUB_TAG }}:latest
           target: app
           
