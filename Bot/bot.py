@@ -1,4 +1,5 @@
 import hashlib
+import os.path
 import tempfile
 
 from telegram import (
@@ -16,6 +17,7 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+import Bot.uploader as api_client
 from Core.config import settings
 from Core.logger import get_logger
 from Download.downloader import get_downloader, DOWNLOADER_MAP, BaseDownloader
@@ -83,7 +85,7 @@ async def handler__download_request(update: Update, context: CallbackContext):
     context.chat_data[md_] = downloader
     context.job_queue.run_once(
         cb__clean_request,
-        settings.TELEGRAM_AUTO_DELETE,
+        settings.BOT_AUTO_DELETE,
         chat_id=update.effective_message.chat_id,
         data=dict(msg=options_msg, hash_str=md_),
     )
@@ -118,23 +120,25 @@ async def handler__download_video(update: Update, context: CallbackContext):
         text=f"please wait while fetching {quality} video ..."
     )
     downloader.set_quality(quality)
-    with tempfile.TemporaryFile() as f_:
-        await downloader.download_video(f_)
-        f_.seek(0)
-        await query.message.reply_to_message.reply_video(
-            f_, filename=downloader.file_name, quote=True
-        )
+    with tempfile.TemporaryDirectory() as dir_:
+        file_path = os.path.join(dir_, downloader.file_name)
+        with open(file_path, "wb") as f_:
+            await downloader.download_video(f_)
+        file_uploaded = await api_client.upload(file_path)
+    chat = update.effective_chat
+    await chat.forward_from(settings.CLIENT_STORAGE, file_uploaded.id)
+    await api_client.delete(file_uploaded.id)
     await wait_message.delete()
 
 
 def run():
-    app = ApplicationBuilder().token(settings.TELEGRAM_KEY)
+    app = ApplicationBuilder().token(settings.BOT_KEY)
     prx_url = settings.HTTP_PROXY
     if prx_url:
         logger.info(f"using proxy {prx_url}")
         app.proxy_url(prx_url).get_updates_proxy_url(prx_url)
-    app.read_timeout(settings.TELEGRAM_READ_TIMEOUT)
-    app.write_timeout(settings.TELEGRAM_WRITE_TIMEOUT)
+    app.read_timeout(settings.BOT_READ_TIMEOUT)
+    app.write_timeout(settings.BOT_WRITE_TIMEOUT)
     app = app.build()
 
     app.add_handler(

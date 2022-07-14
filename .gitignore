@@ -126,3 +126,7 @@ dmypy.json
 .idea/
 
 docker-compose.dev.yaml
+
+storge/
+
+test.py
