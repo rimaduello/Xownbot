@@ -35,10 +35,12 @@ def _get_entity():
     return settings.CLIENT_STORAGE
 
 
-async def upload(file):
+async def upload(file, **kwargs):
     client_ = _get_client()
     async with client_:
-        msg = await client_.send_file(entity=_get_entity(), file=file)
+        msg = await client_.send_file(
+            entity=_get_entity(), file=file, **kwargs
+        )
     return msg
 
 

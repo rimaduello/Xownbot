@@ -124,7 +124,10 @@ async def handler__download_video(update: Update, context: CallbackContext):
         file_path = os.path.join(dir_, downloader.file_name)
         with open(file_path, "wb") as f_:
             await downloader.download_video(f_)
-        file_uploaded = await api_client.upload(file_path)
+        file_uploaded = await api_client.upload(
+            file_path,
+            supports_streaming=True,
+        )
     chat = update.effective_chat
     await chat.forward_from(settings.CLIENT_STORAGE, file_uploaded.id)
     await api_client.delete(file_uploaded.id)
