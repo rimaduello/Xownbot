@@ -1,7 +1,7 @@
 import asyncio
 
 from telethon.client import TelegramClient
-
+from Bot.fast_telethon import upload_file
 from Core.config import settings, BASE_DIR
 
 TELEGRAM_SESSION_PATH = BASE_DIR / "storge/tg_session"
@@ -12,9 +12,8 @@ class TgClient:
     async def upload(self, file, **kwargs):
         client_ = self.tg_client
         async with client_:
-            msg = await client_.send_file(
-                entity=self.storage_entity, file=file, **kwargs
-            )
+            uploaded = await upload_file(client_, file)
+            msg = await client_.send_file(self.storage_entity, uploaded)
         return msg
 
     async def delete(self, message_id: str):
