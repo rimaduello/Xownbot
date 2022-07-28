@@ -1,5 +1,6 @@
 import hashlib
 import os.path
+import re
 import tempfile
 from abc import abstractmethod
 
@@ -73,8 +74,7 @@ class VideoDownloadHandle(BaseDownloadHandle):
             file_path = os.path.join(dir_, self.downloader.file_name)
             with open(file_path, "wb") as f_:
                 await self.downloader.download_video(f_)
-            with open(file_path, "rb") as f_:
-                file_uploaded = await tg_cl_.upload(f_, force_document=True)
+            file_uploaded = await tg_cl_.upload(f_.name)
         chat = self.update.effective_chat
         await chat.forward_from(settings.CLIENT_STORAGE, file_uploaded.id)
         await tg_cl_.delete(file_uploaded.id)
