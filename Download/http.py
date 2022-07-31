@@ -55,7 +55,9 @@ class AioHttpSession(BaseSession):
 
     @property
     def session(self):
-        connector = aiohttp.TCPConnector(limit_per_host=10)
+        connector = aiohttp.TCPConnector(
+            limit_per_host=Settings.DOWNLOADER_THROTTLING
+        )
         return aiohttp.ClientSession(connector=connector)
 
     def _get_call_fn(self, session, fn):

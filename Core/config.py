@@ -18,6 +18,8 @@ class SettingsCls(BaseSettings):
     BOT_STORAGE: int
     TD_URL: HttpUrl
     TD_REFRESH_TOKEN: str
+    TD_THROTTLING: int = 10
+    DOWNLOADER_THROTTLING: int = 10
     HTTP_PROXY: Optional[AnyHttpUrl] = None
     LOG_LEVEL: str = "WARNING"
 

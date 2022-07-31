@@ -5,7 +5,7 @@ from pathlib import Path
 from types import MethodType
 from typing import BinaryIO
 
-from aiohttp import ClientSession, FormData
+from aiohttp import ClientSession, FormData, TCPConnector
 from multidict import CIMultiDict
 
 from Core.config import Settings
@@ -90,7 +90,10 @@ class TeleDriveClient:
         extra_headers = extra_headers or {}
         headers = {**({} if no_default_header else self.DEFAULT_HEADERS)}
         headers.update(extra_headers)
-        cl_ = ClientSession(base_url=self.END_POINT, headers=headers)
+        connector = TCPConnector(limit_per_host=Settings.TD_THROTTLING)
+        cl_ = ClientSession(
+            base_url=self.END_POINT, headers=headers, connector=connector
+        )
         logger.debug(f"created client:{cl_.__dict__}")
         logger.debug(f"client headers:{headers}")
         if Settings.HTTP_PROXY:
