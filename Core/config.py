@@ -15,9 +15,7 @@ class SettingsCls(BaseSettings):
     BOT_READ_TIMEOUT: float = 5
     BOT_WRITE_TIMEOUT: float = 5
     BOT_DOWNLOADER_CACHE_PATH: Path = BASE_DIR.default / "storage/downloader"
-    CLIENT_ID: str
-    CLIENT_HASH: str
-    CLIENT_STORAGE: int
+    BOT_STORAGE: int
     TD_URL: HttpUrl
     TD_REFRESH_TOKEN: str
     HTTP_PROXY: Optional[AnyHttpUrl] = None

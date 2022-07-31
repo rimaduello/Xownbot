@@ -88,7 +88,7 @@ class VideoDownloadHandle(BaseDownloadHandle):
                 "message_id"
             ]
         chat = self.update.effective_chat
-        await chat.forward_from(Settings.CLIENT_STORAGE, message_id)
+        await chat.forward_from(Settings.BOT_STORAGE, message_id)
 
 
 class LoadingMessage:
