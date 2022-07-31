@@ -125,9 +125,6 @@ class SSBVideoDownloadHandle(BaseDownloadHandle):
 
 async def download_request(update: Update, context: CallbackContext):
     def download_options(downloader_: BaseDownloader, hash_str: str):
-        def _get_kbd_title(name__, size__):
-            return f"{name__}: {round(size__ / (1024 ** 2), 2)} MB"
-
         def _get_kbd_sorted(qualities__):
             return sorted(qualities__, key=lambda d_: d_["size"])
 
@@ -139,7 +136,7 @@ async def download_request(update: Update, context: CallbackContext):
         kybrd__ = [
             [
                 InlineKeyboardButton(
-                    _get_kbd_title(x["name"], x["size"]),
+                    f"{x['name']}: {round(x['size'] / (1024 ** 2), 2)} MB",
                     callback_data=f"dl:video:{hash_str}:{x['name']}",
                 )
             ]
@@ -148,7 +145,7 @@ async def download_request(update: Update, context: CallbackContext):
         kybrd__ += [
             [
                 InlineKeyboardButton(
-                    "StreamSB " + _get_kbd_title(x["name"], x["size"]),
+                    "StreamSB " + x["name"],
                     callback_data=f"dl:ssb:{hash_str}:{x['name']}",
                 )
             ]
