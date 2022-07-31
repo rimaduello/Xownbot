@@ -14,11 +14,15 @@ class SettingsCls(BaseSettings):
     BOT_AUTO_DELETE: float = 60 * 10
     BOT_READ_TIMEOUT: float = 5
     BOT_WRITE_TIMEOUT: float = 5
+    # noinspection PyUnresolvedReferences
     BOT_DOWNLOADER_CACHE_PATH: Path = BASE_DIR.default / "storage/downloader"
     BOT_STORAGE: int
     TD_URL: HttpUrl
     TD_REFRESH_TOKEN: str
     TD_THROTTLING: int = 10
+    SSB_URL: HttpUrl = "https://api.streamsb.com"
+    SSB_TOKEN: str
+    SSB_FILE_URL: HttpUrl = "https://sbthe.com"
     DOWNLOADER_THROTTLING: int = 10
     HTTP_PROXY: Optional[AnyHttpUrl] = None
     LOG_LEVEL: str = "WARNING"

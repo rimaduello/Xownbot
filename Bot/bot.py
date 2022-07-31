@@ -42,4 +42,7 @@ def run():
     app.add_handler(
         CallbackQueryHandler(handlers.video_download, pattern="^dl:video.+$")
     )
+    app.add_handler(
+        CallbackQueryHandler(handlers.ssb_video_download, pattern="^dl:ssb.+$")
+    )
     app.run_polling()

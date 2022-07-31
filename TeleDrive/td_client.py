@@ -94,6 +94,7 @@ class TeleDriveClient:
         cl_ = ClientSession(
             base_url=self.END_POINT, headers=headers, connector=connector
         )
+        # noinspection DuplicatedCode
         logger.debug(f"created client:{cl_.__dict__}")
         logger.debug(f"client headers:{headers}")
         if Settings.HTTP_PROXY:

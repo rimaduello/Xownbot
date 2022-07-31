@@ -24,11 +24,26 @@ from Download.downloader import (
     BaseDownloader,
     BaseM3U8BaseDownloader,
 )
+from StreamSB.ssb_client import StreamSBClient
 from TeleDrive.td_client import TeleDriveClient
 
 logger = get_logger("BOT")
 
 DownloaderType = Union[BaseDownloader, BaseM3U8BaseDownloader]
+
+
+class LoadingMessage:
+    message_obj = None
+
+    def __init__(self, original_msg, text: str):
+        self.original_obj = original_msg
+        self.text = text
+
+    async def __aenter__(self):
+        self.message_obj = await self.original_obj.reply_text(text=self.text)
+
+    async def __aexit__(self, exc_type, exc_value, exc_traceback):
+        await self.message_obj.delete()
 
 
 class BaseDownloadHandle:
@@ -91,22 +106,31 @@ class VideoDownloadHandle(BaseDownloadHandle):
         await chat.forward_from(Settings.BOT_STORAGE, message_id)
 
 
-class LoadingMessage:
-    message_obj = None
-
-    def __init__(self, original_msg, text: str):
-        self.original_obj = original_msg
-        self.text = text
-
-    async def __aenter__(self):
-        self.message_obj = await self.original_obj.reply_text(text=self.text)
-
-    async def __aexit__(self, exc_type, exc_value, exc_traceback):
-        await self.message_obj.delete()
+class SSBVideoDownloadHandle(BaseDownloadHandle):
+    async def handle(self):
+        quality = self.query.data.rsplit(":", 1)[-1]
+        self.downloader.set_quality(quality)
+        ssb_cl_ = StreamSBClient()
+        with tempfile.TemporaryDirectory() as dir_:
+            file_path = os.path.join(dir_, self.downloader.file_name)
+            with open(file_path, "wb") as f_:
+                await self.downloader.download_video(f_)
+            with open(file_path, "rb") as f_:
+                _, req = await ssb_cl_.upload(f_)
+            file_url = ssb_cl_.get_file_url(req[0]["code"])
+        await self.query.message.reply_to_message.reply_text(
+            file_url, quote=True
+        )
 
 
 async def download_request(update: Update, context: CallbackContext):
     def download_options(downloader_: BaseDownloader, hash_str: str):
+        def _get_kbd_title(name__, size__):
+            return f"{name__}: {round(size__ / (1024 ** 2), 2)} MB"
+
+        def _get_kbd_sorted(qualities__):
+            return sorted(qualities__, key=lambda d_: d_["size"])
+
         msg__ = f"<b>{downloader_.name}</b>"
         for k_, v_ in downloader_.meta.items():
             msg__ += f"\n•\t<i>{k_}: {v_}</i>"
@@ -115,11 +139,20 @@ async def download_request(update: Update, context: CallbackContext):
         kybrd__ = [
             [
                 InlineKeyboardButton(
-                    f"{x['name']}: {round(x['size'] / (1024 ** 2), 2)} MB",
+                    _get_kbd_title(x["name"], x["size"]),
                     callback_data=f"dl:video:{hash_str}:{x['name']}",
                 )
             ]
-            for x in sorted(downloader_.qualities, key=lambda d_: d_["size"])
+            for x in _get_kbd_sorted(downloader_.qualities)
+        ]
+        kybrd__ += [
+            [
+                InlineKeyboardButton(
+                    "StreamSB " + _get_kbd_title(x["name"], x["size"]),
+                    callback_data=f"dl:ssb:{hash_str}:{x['name']}",
+                )
+            ]
+            for x in _get_kbd_sorted(downloader_.qualities)
         ]
         if downloader_.image_urls:
             kybrd__.append(
@@ -203,3 +236,4 @@ def _set_downloader_cache(downloader: DownloaderType):
 
 image_download = ImageDownloadHandle.run
 video_download = VideoDownloadHandle.run
+ssb_video_download = SSBVideoDownloadHandle.run
