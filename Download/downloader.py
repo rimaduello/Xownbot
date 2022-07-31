@@ -33,7 +33,6 @@ class BaseDownloader(ABC):
         self.url = url
         self.session = HttpSession()
         self.session_async = AioHttpSession()
-        self.file = None
         self.name = None
         self.meta = {}
         self.base_content = None
@@ -229,8 +228,9 @@ DOWNLOADER_MAP = {"pornez.net": PornEZ, "xvideos.com": XVideos}
 
 
 def get_downloader(url) -> BaseDownloader:
-    url_parsed = urllib.parse.urlparse(url)
-    domain = url_parsed.netloc
-    if domain.startswith("www."):
-        domain = domain[len("www.") :]
-    return DOWNLOADER_MAP[domain](url)
+    scheme, netloc, path, qs, anchor = urllib.parse.urlsplit(url)
+    if netloc.startswith("www."):
+        netloc = netloc[len("www.") :]
+    path = urllib.parse.quote(path, "/%")
+    url_parsed = urllib.parse.urlunsplit((scheme, netloc, path, None, None))
+    return DOWNLOADER_MAP[netloc](url_parsed)

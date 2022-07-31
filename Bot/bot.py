@@ -6,23 +6,24 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CallbackQueryHandler,
+    PicklePersistence,
 )
 
 from Bot import handlers
-from Core.config import settings
+from Core.config import Settings
 from Core.logger import get_logger
 
 logger = get_logger("BOT")
 
 
 def run():
-    app = ApplicationBuilder().token(settings.BOT_KEY)
-    prx_url = settings.HTTP_PROXY
+    app = ApplicationBuilder().token(Settings.BOT_KEY)
+    prx_url = Settings.HTTP_PROXY
     if prx_url:
         logger.info(f"using proxy {prx_url}")
-        app.proxy_url(prx_url).get_updates_proxy_url(prx_url)
-    app.read_timeout(settings.BOT_READ_TIMEOUT)
-    app.write_timeout(settings.BOT_WRITE_TIMEOUT)
+        app = app.proxy_url(prx_url).get_updates_proxy_url(prx_url)
+    app = app.read_timeout(Settings.BOT_READ_TIMEOUT)
+    app = app.write_timeout(Settings.BOT_WRITE_TIMEOUT)
     app = app.build()
 
     app.add_handler(
@@ -36,13 +37,9 @@ def run():
         )
     )
     app.add_handler(
-        CallbackQueryHandler(
-            handlers.ImageDownloadHandle.run, pattern="^dl:image.+$"
-        )
+        CallbackQueryHandler(handlers.image_download, pattern="^dl:image.+$")
     )
     app.add_handler(
-        CallbackQueryHandler(
-            handlers.VideoDownloadHandle.run, pattern="^dl:video.+$"
-        )
+        CallbackQueryHandler(handlers.video_download, pattern="^dl:video.+$")
     )
     app.run_polling()

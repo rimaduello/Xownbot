@@ -1,7 +1,7 @@
 import asyncio
 
 from telethon.client import TelegramClient
-from Core.config import settings, BASE_DIR
+from Core.config import Settings, BASE_DIR
 from FastTelethonhelper import fast_upload
 
 TELEGRAM_SESSION_PATH = BASE_DIR / "storge/tg_session"
@@ -36,7 +36,7 @@ class TgClient:
 
     @property
     def configuration_data(self):
-        prx_ = settings.HTTP_PROXY
+        prx_ = Settings.HTTP_PROXY
         if prx_:
             prx_ = {
                 "proxy_type": "http",
@@ -46,8 +46,8 @@ class TgClient:
                 "password": prx_.password,
             }
         conf_ = {
-            "api_id": settings.CLIENT_ID,
-            "api_hash": settings.CLIENT_HASH,
+            "api_id": Settings.CLIENT_ID,
+            "api_hash": Settings.CLIENT_HASH,
             "session": str(TELEGRAM_SESSION_PATH),
             "proxy": prx_,
         }
@@ -59,7 +59,7 @@ class TgClient:
 
     @property
     def storage_entity(self):
-        return settings.CLIENT_STORAGE
+        return Settings.CLIENT_STORAGE
 
 
 asyncio.get_event_loop().run_until_complete(TgClient.create_session())

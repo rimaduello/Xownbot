@@ -130,3 +130,5 @@ docker-compose.dev.yaml
 storge/
 
 test.py
+
+storage/

@@ -6,13 +6,13 @@ from typing import Callable
 import aiohttp
 import requests
 
-from Core.config import settings
+from Core.config import Settings
 
 
 class BaseSession(ABC):
     @property
     def proxy(self):
-        return settings.HTTP_PROXY
+        return Settings.HTTP_PROXY
 
     @abstractmethod
     def get(self, url, *args, **kwargs):

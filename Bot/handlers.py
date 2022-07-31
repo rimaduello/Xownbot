@@ -1,8 +1,9 @@
 import hashlib
 import os.path
-import re
+import pickle
 import tempfile
 from abc import abstractmethod
+from typing import Union
 
 from telegram import (
     Update,
@@ -14,13 +15,20 @@ from telegram.ext import (
     CallbackContext,
 )
 
-from Bot.tg_client import TgClient
 from Bot.callbacks import delete_download_request
-from Core.config import settings
+from Core.config import Settings
 from Core.logger import get_logger
-from Download.downloader import get_downloader, DOWNLOADER_MAP, BaseDownloader
+from Download.downloader import (
+    get_downloader,
+    DOWNLOADER_MAP,
+    BaseDownloader,
+    BaseM3U8BaseDownloader,
+)
+from TeleDrive.td_client import TeleDriveClient
 
 logger = get_logger("BOT")
+
+DownloaderType = Union[BaseDownloader, BaseM3U8BaseDownloader]
 
 
 class BaseDownloadHandle:
@@ -69,15 +77,32 @@ class VideoDownloadHandle(BaseDownloadHandle):
     async def handle(self):
         quality = self.query.data.rsplit(":", 1)[-1]
         self.downloader.set_quality(quality)
-        tg_cl_ = TgClient()
+        td_cl_ = TeleDriveClient()
         with tempfile.TemporaryDirectory() as dir_:
             file_path = os.path.join(dir_, self.downloader.file_name)
             with open(file_path, "wb") as f_:
                 await self.downloader.download_video(f_)
-            file_uploaded = await tg_cl_.upload(f_.name)
+            with open(file_path, "rb") as f_:
+                file_uid = await td_cl_.upload(file=f_)
+            message_id = (await td_cl_.retrieve(file_uid))["file"][
+                "message_id"
+            ]
         chat = self.update.effective_chat
-        await chat.forward_from(settings.CLIENT_STORAGE, file_uploaded.id)
-        await tg_cl_.delete(file_uploaded.id)
+        await chat.forward_from(Settings.CLIENT_STORAGE, message_id)
+
+
+class LoadingMessage:
+    message_obj = None
+
+    def __init__(self, original_msg, text: str):
+        self.original_obj = original_msg
+        self.text = text
+
+    async def __aenter__(self):
+        self.message_obj = await self.original_obj.reply_text(text=self.text)
+
+    async def __aexit__(self, exc_type, exc_value, exc_traceback):
+        await self.message_obj.delete()
 
 
 async def download_request(update: Update, context: CallbackContext):
@@ -120,7 +145,13 @@ async def download_request(update: Update, context: CallbackContext):
         return
 
     async with LoadingMessage(original_msg, "please wait ..."):
-        await downloader.prepare()
+        cache_ = _get_downloader_cache(downloader)
+        if cache_:
+            downloader = cache_
+        else:
+            await downloader.prepare()
+            _set_downloader_cache(downloader)
+
     md_ = hashlib.md5(downloader.url.encode()).hexdigest()
     msg_, kybrd_ = download_options(downloader, md_)
     options_msg = await original_msg.reply_html(
@@ -129,21 +160,46 @@ async def download_request(update: Update, context: CallbackContext):
     context.chat_data[md_] = downloader
     context.job_queue.run_once(
         delete_download_request,
-        settings.BOT_AUTO_DELETE,
+        Settings.BOT_AUTO_DELETE,
         chat_id=update.effective_message.chat_id,
         data=dict(msg=options_msg, hash_str=md_),
     )
 
 
-class LoadingMessage:
-    message_obj = None
+def _get_downloader_cache(downloader: DownloaderType):
+    md_ = hashlib.md5(downloader.url.encode()).hexdigest()
+    file_ = Settings.BOT_DOWNLOADER_CACHE_PATH / md_
+    if not file_.is_file():
+        return
+    with open(file_, "rb") as f_:
+        downloader_data = pickle.load(f_)
+    logger.debug(f"loading downloader from cache: {downloader_data}")
+    downloader.name = downloader_data["name"]
+    downloader.meta = downloader_data["meta"]
+    downloader.base_content = downloader_data["base_content"]
+    downloader.qualities = downloader_data["qualities"]
+    downloader.image_urls = downloader_data["image_urls"]
+    if isinstance(downloader, BaseM3U8BaseDownloader):
+        downloader.src_list = downloader_data["src_list"]
+    return downloader
 
-    def __init__(self, original_msg, text: str):
-        self.original_obj = original_msg
-        self.text = text
 
-    async def __aenter__(self):
-        self.message_obj = await self.original_obj.reply_text(text=self.text)
+def _set_downloader_cache(downloader: DownloaderType):
+    md_ = hashlib.md5(downloader.url.encode()).hexdigest()
+    file_ = Settings.BOT_DOWNLOADER_CACHE_PATH / md_
+    downloader_data = {
+        "name": downloader.name,
+        "meta": downloader.meta,
+        "base_content": downloader.base_content,
+        "qualities": downloader.qualities,
+        "image_urls": downloader.image_urls,
+    }
+    if isinstance(downloader, BaseM3U8BaseDownloader):
+        downloader_data["src_list"] = downloader.src_list
+    logger.debug(f"dumping downloader from cache: {downloader_data}")
+    with open(file_, "wb") as f_:
+        pickle.dump(downloader_data, f_)
 
-    async def __aexit__(self, exc_type, exc_value, exc_traceback):
-        await self.message_obj.delete()
+
+image_download = ImageDownloadHandle.run
+video_download = VideoDownloadHandle.run
