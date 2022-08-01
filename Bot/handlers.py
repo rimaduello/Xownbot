@@ -3,6 +3,7 @@ import os.path
 import pickle
 import tempfile
 from abc import abstractmethod
+from pathlib import Path
 from typing import Union
 
 from telegram import (
@@ -99,11 +100,11 @@ class VideoDownloadHandle(BaseDownloadHandle):
                 await self.downloader.download_video(f_)
             with open(file_path, "rb") as f_:
                 file_uid = await td_cl_.upload(file=f_)
-            message_id = (await td_cl_.retrieve(file_uid))["file"][
-                "message_id"
-            ]
-        chat = self.update.effective_chat
-        await chat.forward_from(Settings.BOT_STORAGE, message_id)
+        uploaded = await td_cl_.retrieve(file_uid)
+        message_id = uploaded["file"]["message_id"]
+        await self.query.message.reply_to_message.reply_copy(
+            Settings.BOT_STORAGE, message_id
+        )
 
 
 class SSBVideoDownloadHandle(BaseDownloadHandle):
@@ -116,11 +117,37 @@ class SSBVideoDownloadHandle(BaseDownloadHandle):
             with open(file_path, "wb") as f_:
                 await self.downloader.download_video(f_)
             with open(file_path, "rb") as f_:
-                _, req = await ssb_cl_.upload(f_)
+                req = await ssb_cl_.upload(f_)
             file_url = ssb_cl_.get_file_url(req[0]["code"])
         await self.query.message.reply_to_message.reply_text(
             file_url, quote=True
         )
+
+
+async def video_upload(update: Update, _):
+    message = update.message
+    td_cl = TeleDriveClient()
+    ssb_cl = StreamSBClient()
+    bot = update.effective_chat.get_bot()
+    async with LoadingMessage(
+        message,
+        "please wait while fetching requested media ...",
+    ):
+        fwed = await bot.forward_message(
+            chat_id=Settings.BOT_STORAGE,
+            from_chat_id=update.effective_chat.id,
+            message_id=update.message.id,
+        )
+        file_td = await td_cl.create(fwed.message_id)
+        with tempfile.TemporaryDirectory() as dir_:
+            with open(Path(dir_) / file_td["file"]["name"], "wb") as f_:
+                await td_cl.download(
+                    file_uid=file_td["file"]["id"], save_to=f_
+                )
+            with open(Path(dir_) / file_td["file"]["name"], "rb") as f_:
+                ssb_file = await ssb_cl.upload(f_)
+        file_url = ssb_cl.get_file_url(ssb_file[0]["code"])
+    await message.reply_text(file_url, quote=True)
 
 
 async def download_request(update: Update, context: CallbackContext):

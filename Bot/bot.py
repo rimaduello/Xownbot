@@ -6,7 +6,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CallbackQueryHandler,
-    PicklePersistence,
 )
 
 from Bot import handlers
@@ -14,6 +13,18 @@ from Core.config import Settings
 from Core.logger import get_logger
 
 logger = get_logger("BOT")
+
+
+class StorageChatFilter(filters.UpdateFilter):
+    def filter(self, update):
+        return update.effective_chat.id == Settings.BOT_STORAGE
+
+
+storage_chat_filter = StorageChatFilter()
+
+
+async def dummy(*_, **__):
+    return
 
 
 def run():
@@ -24,8 +35,9 @@ def run():
         app = app.proxy_url(prx_url).get_updates_proxy_url(prx_url)
     app = app.read_timeout(Settings.BOT_READ_TIMEOUT)
     app = app.write_timeout(Settings.BOT_WRITE_TIMEOUT)
+    app = app.pool_timeout(Settings.BOT_POOL_TIMEOUT)
     app = app.build()
-
+    app.add_handler(MessageHandler(storage_chat_filter, dummy))
     app.add_handler(
         MessageHandler(
             filters.TEXT
@@ -45,4 +57,5 @@ def run():
     app.add_handler(
         CallbackQueryHandler(handlers.ssb_video_download, pattern="^dl:ssb.+$")
     )
+    app.add_handler(MessageHandler(filters.VIDEO, handlers.video_upload))
     app.run_polling()

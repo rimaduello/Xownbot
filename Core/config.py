@@ -14,6 +14,7 @@ class SettingsCls(BaseSettings):
     BOT_AUTO_DELETE: float = 60 * 10
     BOT_READ_TIMEOUT: float = 5
     BOT_WRITE_TIMEOUT: float = 5
+    BOT_POOL_TIMEOUT: float = 5
     # noinspection PyUnresolvedReferences
     BOT_DOWNLOADER_CACHE_PATH: Path = BASE_DIR.default / "storage/downloader"
     BOT_STORAGE: int

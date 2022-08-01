@@ -1,6 +1,6 @@
 from types import MethodType
 
-from aiohttp import ClientSession, FormData
+from aiohttp import ClientSession, FormData, ClientResponse, ContentTypeError
 
 from Core.config import Settings
 from Core.logger import get_logger
@@ -46,7 +46,7 @@ class StreamSBClient:
         return cl_
 
     async def upload(self, file):
-        _, upload_url = await self.get_upload_server()
+        upload_url = await self.get_upload_server()
         upload_url = urllib.parse.urlparse(upload_url)
         client_ = await self.get_client(
             end_point=urllib.parse.urlunsplit(
@@ -58,28 +58,36 @@ class StreamSBClient:
         data.add_field("json", "1")
         data.add_field("file", file)
         async with client_ as cl_:
-            return await self._request(
+            _, resp = await self._request(
                 type_="post", path=upload_url.path, client=cl_, data=data
             )
+        return resp
 
     async def get_upload_server(self):
         path = self.PATH["get_upload_server"]
         client_ = await self.get_client()
         params = self.DEFAULT_PARAMS
         async with client_ as cl_:
-            return await self._request(
+            _, res = await self._request(
                 type_="get", path=path, client=cl_, params=params
             )
+            return res
 
     @staticmethod
-    async def _request(type_, path, client, data=None, params=None):
+    async def _request(type_, path, client: ClientSession, **kwargs):
         fn_ = {
             "get": client.get,
             "post": client.post,
         }[type_]
-        async with fn_(path, params=params, data=data) as req_:
-            jsn = await req_.json()
-            return req_, jsn["result"]
+        req_: ClientResponse
+        async with fn_(path, **kwargs) as req_:
+            data = await req_.read()
+            try:
+                data = (await req_.json())["result"]
+            except ContentTypeError as e_:
+                logger.error(f"non json response content: {data}")
+                raise e_
+        return req_, data
 
     @staticmethod
     def get_file_url(file_id):
