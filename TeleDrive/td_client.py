@@ -53,15 +53,18 @@ class TeleDriveClient:
                 save_to.write(r_)
 
     async def upload(self, file: BinaryIO, name=None, mime_type=None):
+        sem = asyncio.Semaphore(Settings.TD_THROTTLING)
+
         async def __upload_chunk(part_no_):
-            return await self._upload_chunk(
-                client=cl_,
-                path=path,
-                file=file,
-                params=params,
-                part_no=part_no_,
-                chunk_size=chunk_size,
-            )
+            async with sem:
+                return await self._upload_chunk(
+                    client=cl_,
+                    path=path,
+                    file=file,
+                    params=params,
+                    part_no=part_no_,
+                    chunk_size=chunk_size,
+                )
 
         chunk_size = 512 * 1024
         info = self.get_file_info(file)
