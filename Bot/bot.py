@@ -1,3 +1,4 @@
+import cachetools.func
 from telegram import (
     MessageEntity,
 )
@@ -20,11 +21,23 @@ class StorageChatFilter(filters.UpdateFilter):
         return update.effective_chat.id == Settings.BOT_STORAGE
 
 
+class UnAuthorisedFilter(filters.UpdateFilter):
+    @staticmethod
+    @cachetools.func.ttl_cache(maxsize=128, ttl=10 * 60)
+    def _is_authed(user_id):
+        with open(Settings.BOT_USERS_FILE) as f_:
+            for u_ in f_:
+                if u_ == str(user_id):
+                    return False
+        return True
+
+    def filter(self, update):
+        return self._is_authed(update.effective_user.id)
+
+
 storage_chat_filter = StorageChatFilter()
 
-
-async def dummy(*_, **__):
-    return
+unauthorised_filter = UnAuthorisedFilter()
 
 
 def run():
@@ -37,8 +50,8 @@ def run():
     app = app.write_timeout(Settings.BOT_WRITE_TIMEOUT)
     app = app.pool_timeout(Settings.BOT_POOL_TIMEOUT)
     app = app.build()
-    # noinspection PyTypeChecker
-    app.add_handler(MessageHandler(storage_chat_filter, dummy))
+    app.add_handler(MessageHandler(storage_chat_filter, handlers.dummy))
+    app.add_handler(MessageHandler(unauthorised_filter, handlers.unauthorised))
     app.add_handler(
         MessageHandler(
             filters.TEXT

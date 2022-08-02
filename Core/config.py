@@ -15,8 +15,8 @@ class SettingsCls(BaseSettings):
     BOT_READ_TIMEOUT: float = 5
     BOT_WRITE_TIMEOUT: float = 5
     BOT_POOL_TIMEOUT: float = 5
-    # noinspection PyUnresolvedReferences
-    BOT_DOWNLOADER_CACHE_PATH: Path = BASE_DIR.default / "storage/downloader"
+    BOT_DOWNLOADER_CACHE_PATH: Path = "storage/downloader"
+    BOT_USERS_FILE: Path = "storage/users"
     BOT_STORAGE: int
     TD_API_ID: str
     TD_API_HASH: str
@@ -33,8 +33,20 @@ class SettingsCls(BaseSettings):
 
     # noinspection PyMethodParameters
     @validator("BOT_DOWNLOADER_CACHE_PATH", always=True)
+    def generate__bot_downloader_cache_path(cls, v, values):
+        v = values["BASE_DIR"] / v
+        return v
+
+    # noinspection PyMethodParameters
+    @validator("BOT_DOWNLOADER_CACHE_PATH", always=True)
     def create__bot_downloader_cache_path(cls, v):
         v.mkdir(parents=True, exist_ok=True)
+        return v
+
+    # noinspection PyMethodParameters
+    @validator("BOT_USERS_FILE", always=True)
+    def generate__bot_users_file(cls, v, values):
+        v = values["BASE_DIR"] / v
         return v
 
 

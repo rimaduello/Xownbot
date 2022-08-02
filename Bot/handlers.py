@@ -219,6 +219,18 @@ async def download_request(update: Update, context: CallbackContext):
     logger.info(f"download request done: {url}")
 
 
+async def unauthorised(update: Update, _):
+    logger.warning(
+        f"un-authorized request: {update.effective_user.id} ({update.effective_user.name}):"
+        f"{update.message}"
+    )
+    return
+
+
+async def dummy(_, __):
+    return
+
+
 def _get_downloader_cache(downloader: DownloaderType):
     md_ = hashlib.md5(downloader.url.encode()).hexdigest()
     file_ = Settings.BOT_DOWNLOADER_CACHE_PATH / md_
