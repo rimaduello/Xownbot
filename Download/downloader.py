@@ -44,16 +44,15 @@ class BaseDownloader(ABC):
     async def prepare(self):
         logger.info(f"preparing for {self.url}")
         await self.get_base_content()
-        logger.info(f"got content with size {len(self.base_content)}")
-        logger.debug(f"got content {self.base_content}")
         await self.get_name()
-        logger.info(f"determined name {self.name}")
         await self.get_meta()
-        logger.info(f"determined meta {self.meta}")
         await self.get_qualities()
-        logger.info(f"available qualities {self.qualities}")
         await self.get_image_urls()
-        logger.info(f"available images {self.image_urls}")
+        logger.info(
+            f"preparing for {self.url}: name={self.name} "
+            f"size={len(self.base_content)} meta={self.meta} "
+            f"qualities={self.qualities} images={self.image_urls}"
+        )
 
     async def get_base_content(self):
         data_ = await self.session_async.get_async(url=self.url)
@@ -61,12 +60,18 @@ class BaseDownloader(ABC):
         self.base_bs4 = BeautifulSoup(self.base_content, "html.parser")
 
     async def download_video(self, writer):
+        log_ = f"{self.url} quality={self.quality['name']} url={self.quality['url']}"
+        logger.info(f"video download request: {log_}")
         data_ = await self.session_async.get_async(url=self.quality["url"])
         writer.write(data_.content)
+        logger.info(f"video download request done: {log_}")
 
     async def download_image(self, writer, i):
+        log_ = f"{self.url} url={self.image_urls[i]}"
+        logger.info(f"image download request: {log_}")
         data_ = await self.session_async.get_async(url=self.image_urls[i])
         writer.write(data_.content)
+        logger.info(f"image download request done: {log_}")
 
     def set_quality(self, q_name: str):
         for q_ in self.qualities:
@@ -125,6 +130,8 @@ class BaseM3U8BaseDownloader(BaseDownloader, ABC):
         return int(size)
 
     async def download_video(self, writer):
+        log_ = f"{self.url} quality={self.quality['name']} url={self.quality['url']}"
+        logger.info(f"video download request: {log_}")
         src_ = self.src_list[self.quality["name"]]
         with tempfile.TemporaryDirectory() as dir_:
             async for c_, d_ in self.session_async.get_many_async(
@@ -135,6 +142,7 @@ class BaseM3U8BaseDownloader(BaseDownloader, ABC):
             for c_, _ in enumerate(src_.segments):
                 with open(os.path.join(dir_, str(c_)), "rb") as f_:
                     writer.write(f_.read())
+        logger.info(f"video download request done: {log_}")
 
 
 class PornEZ(BaseM3U8BaseDownloader):

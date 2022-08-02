@@ -3,7 +3,6 @@ import os.path
 import pickle
 import tempfile
 from abc import abstractmethod
-from pathlib import Path
 from typing import Union
 
 from telegram import (
@@ -66,6 +65,7 @@ class BaseDownloadHandle:
             "please wait while fetching requested media ...",
         ):
             await self.handle()
+        logger.info(f"download request done: {query.data}")
 
     @classmethod
     async def run(cls, update: Update, context: CallbackContext):
@@ -98,12 +98,9 @@ class VideoDownloadHandle(BaseDownloadHandle):
             file_path = os.path.join(dir_, self.downloader.file_name)
             with open(file_path, "wb") as f_:
                 await self.downloader.download_video(f_)
-            with open(file_path, "rb") as f_:
-                file_uid = await td_cl_.upload(file=f_)
-        uploaded = await td_cl_.retrieve(file_uid)
-        message_id = uploaded["file"]["message_id"]
+            uploaded = await td_cl_.upload(file_path)
         await self.query.message.reply_to_message.reply_copy(
-            Settings.BOT_STORAGE, message_id
+            Settings.BOT_STORAGE, uploaded.id
         )
 
 
@@ -126,6 +123,7 @@ class SSBVideoDownloadHandle(BaseDownloadHandle):
 
 async def video_upload(update: Update, _):
     message = update.message
+    logger.info(f"upload request: {message.video.file_id}")
     td_cl = TeleDriveClient()
     ssb_cl = StreamSBClient()
     bot = update.effective_chat.get_bot()
@@ -138,16 +136,13 @@ async def video_upload(update: Update, _):
             from_chat_id=update.effective_chat.id,
             message_id=update.message.id,
         )
-        file_td = await td_cl.create(fwed.message_id)
         with tempfile.TemporaryDirectory() as dir_:
-            with open(Path(dir_) / file_td["file"]["name"], "wb") as f_:
-                await td_cl.download(
-                    file_uid=file_td["file"]["id"], save_to=f_
-                )
-            with open(Path(dir_) / file_td["file"]["name"], "rb") as f_:
+            file_path_ = await td_cl.download(msg_id=fwed.id, dir_path=dir_)
+            with open(file_path_, "rb") as f_:
                 ssb_file = await ssb_cl.upload(f_)
         file_url = ssb_cl.get_file_url(ssb_file[0]["code"])
     await message.reply_text(file_url, quote=True)
+    logger.info(f"upload request done: {update.message.video.file_id}")
 
 
 async def download_request(update: Update, context: CallbackContext):
@@ -192,7 +187,7 @@ async def download_request(update: Update, context: CallbackContext):
 
     original_msg: Message = update.message
     url = original_msg.text
-    logger.info(f"get download request for {url}")
+    logger.info(f"download request: {url}")
     try:
         downloader = get_downloader(url)
     except KeyError:
@@ -221,12 +216,14 @@ async def download_request(update: Update, context: CallbackContext):
         chat_id=update.effective_message.chat_id,
         data=dict(msg=options_msg, hash_str=md_),
     )
+    logger.info(f"download request done: {url}")
 
 
 def _get_downloader_cache(downloader: DownloaderType):
     md_ = hashlib.md5(downloader.url.encode()).hexdigest()
     file_ = Settings.BOT_DOWNLOADER_CACHE_PATH / md_
     if not file_.is_file():
+        logger.debug(f"downloader cache not found: {md_}")
         return
     with open(file_, "rb") as f_:
         downloader_data = pickle.load(f_)
@@ -253,7 +250,7 @@ def _set_downloader_cache(downloader: DownloaderType):
     }
     if isinstance(downloader, BaseM3U8BaseDownloader):
         downloader_data["src_list"] = downloader.src_list
-    logger.debug(f"dumping downloader from cache: {downloader_data}")
+    logger.debug(f"dumping downloader cache: {downloader_data}")
     with open(file_, "wb") as f_:
         pickle.dump(downloader_data, f_)
 

@@ -31,8 +31,9 @@ class StreamSBClient:
             base_url=(end_point or self.END_POINT), headers=headers
         )
         # noinspection DuplicatedCode
-        logger.debug(f"created client:{cl_.__dict__}")
-        logger.debug(f"client headers:{headers}")
+        logger.debug(
+            f"created client: header={headers} end_point={end_point} {cl_.__dict__}"
+        )
         if Settings.HTTP_PROXY:
 
             async def _request(self_, *args, **kwargs):
@@ -46,6 +47,7 @@ class StreamSBClient:
         return cl_
 
     async def upload(self, file):
+        logger.info(f"upload request: {file.name}")
         upload_url = await self.get_upload_server()
         upload_url = urllib.parse.urlparse(upload_url)
         client_ = await self.get_client(
@@ -61,6 +63,7 @@ class StreamSBClient:
             _, resp = await self._request(
                 type_="post", path=upload_url.path, client=cl_, data=data
             )
+        logger.info(f"upload request done: {file.name}")
         return resp
 
     async def get_upload_server(self):
@@ -71,7 +74,8 @@ class StreamSBClient:
             _, res = await self._request(
                 type_="get", path=path, client=cl_, params=params
             )
-            return res
+        logger.info(f"upload server is: {res}")
+        return res
 
     @staticmethod
     async def _request(type_, path, client: ClientSession, **kwargs):
@@ -80,6 +84,7 @@ class StreamSBClient:
             "post": client.post,
         }[type_]
         req_: ClientResponse
+        logger.debug(f"{type_} request: path={path} kwargs={kwargs}")
         async with fn_(path, **kwargs) as req_:
             data = await req_.read()
             try:
@@ -87,6 +92,7 @@ class StreamSBClient:
             except ContentTypeError as e_:
                 logger.error(f"non json response content: {data}")
                 raise e_
+        logger.debug(f"{type_} request done: {path} {req_.status} {data}")
         return req_, data
 
     @staticmethod

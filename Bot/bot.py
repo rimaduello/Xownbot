@@ -37,6 +37,7 @@ def run():
     app = app.write_timeout(Settings.BOT_WRITE_TIMEOUT)
     app = app.pool_timeout(Settings.BOT_POOL_TIMEOUT)
     app = app.build()
+    # noinspection PyTypeChecker
     app.add_handler(MessageHandler(storage_chat_filter, dummy))
     app.add_handler(
         MessageHandler(
@@ -58,4 +59,5 @@ def run():
         CallbackQueryHandler(handlers.ssb_video_download, pattern="^dl:ssb.+$")
     )
     app.add_handler(MessageHandler(filters.VIDEO, handlers.video_upload))
+    logger.info("start pooling ...")
     app.run_polling()

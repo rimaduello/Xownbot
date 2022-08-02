@@ -18,9 +18,8 @@ class SettingsCls(BaseSettings):
     # noinspection PyUnresolvedReferences
     BOT_DOWNLOADER_CACHE_PATH: Path = BASE_DIR.default / "storage/downloader"
     BOT_STORAGE: int
-    TD_URL: HttpUrl
-    TD_REFRESH_TOKEN: str
-    TD_THROTTLING: int = 10
+    TD_API_ID: str
+    TD_API_HASH: str
     SSB_URL: HttpUrl = "https://api.streamsb.com"
     SSB_TOKEN: str
     SSB_FILE_URL: HttpUrl = "https://sbthe.com"
