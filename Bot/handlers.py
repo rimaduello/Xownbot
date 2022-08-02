@@ -1,4 +1,6 @@
+import asyncio
 import hashlib
+import math
 import os.path
 import pickle
 import tempfile
@@ -33,21 +35,54 @@ DownloaderType = Union[BaseDownloader, BaseM3U8BaseDownloader]
 
 
 class LoadingMessage:
+    BAR_LENGTH = 10
     message_obj = None
+    bar_val = 0
+    _old_text = None
 
-    def __init__(self, original_msg, text: str):
+    def __init__(self, original_msg: Message, text: str, bar: bool = False):
         self.original_obj = original_msg
         self.text = text
+        self.bar = bar
+
+    async def update_message(self, text: str):
+        self.text = text
+        await self._update_message()
+
+    async def update_bar_absolute(self, val):
+        self.bar_val = val
+        await self._update_message()
+
+    async def update_bar_relative(self, val):
+        await self.update_bar_absolute(self.bar_val + val)
+
+    async def _update_message(self):
+        if self.text_w_bar != self._old_text:
+            self._old_text = self.text_w_bar
+            await self.message_obj.edit_text(self.text_w_bar)
 
     async def __aenter__(self):
-        self.message_obj = await self.original_obj.reply_text(text=self.text)
+        self._old_text = self.text_w_bar
+        self.message_obj = await self.original_obj.reply_text(
+            text=self.text_w_bar
+        )
 
     async def __aexit__(self, exc_type, exc_value, exc_traceback):
         await self.message_obj.delete()
 
+    @property
+    def text_w_bar(self):
+        t_ = self.text
+        if self.bar:
+            bar_shapes = math.floor(self.bar_val / 100 * self.BAR_LENGTH)
+            t_ += f"\n[{'#' * bar_shapes}{'-' * (self.BAR_LENGTH - bar_shapes)}] {int(self.bar_val)}%"
+        return t_
+
 
 class BaseDownloadHandle:
     downloader: BaseDownloader = None
+    loading_text = "please wait while fetching requested media ..."
+    loading_bar = False
 
     def __init__(self, update: Update, context: CallbackContext):
         self.update = update
@@ -60,11 +95,11 @@ class BaseDownloadHandle:
         hash_str = query.data.split(":", 3)[2]
         self.downloader = self.context.chat_data[hash_str]
         await query.answer()
-        async with LoadingMessage(
-            self.query.message,
-            "please wait while fetching requested media ...",
-        ):
-            await self.handle()
+        lb_ = LoadingMessage(
+            self.query.message, self.loading_text, bar=self.loading_bar
+        )
+        async with lb_:
+            await self.handle(loading_bar=lb_)
         logger.info(f"download request done: {query.data}")
 
     @classmethod
@@ -73,12 +108,12 @@ class BaseDownloadHandle:
         await cls_.exec()
 
     @abstractmethod
-    async def handle(self):
+    async def handle(self, loading_bar: LoadingMessage):
         pass
 
 
 class ImageDownloadHandle(BaseDownloadHandle):
-    async def handle(self):
+    async def handle(self, loading_bar):
         for c_, src_ in enumerate(self.downloader.image_urls):
             with tempfile.TemporaryFile() as f_:
                 await self.downloader.download_image(f_, c_)
@@ -90,29 +125,54 @@ class ImageDownloadHandle(BaseDownloadHandle):
 
 
 class VideoDownloadHandle(BaseDownloadHandle):
-    async def handle(self):
+    loading_bar = True
+
+    @staticmethod
+    def update_bar_download_factory(msg: LoadingMessage):
+        async def _fn(total, rel):
+            await msg.update_bar_relative(rel / total * 100)
+
+        return _fn
+
+    async def handle(self, loading_bar):
         quality = self.query.data.rsplit(":", 1)[-1]
         self.downloader.set_quality(quality)
+        l_title = f"{self.downloader.name} ({quality})"
+        await loading_bar.update_message(f"{l_title}\nDownloading ...")
         td_cl_ = TeleDriveClient()
         with tempfile.TemporaryDirectory() as dir_:
             file_path = os.path.join(dir_, self.downloader.file_name)
             with open(file_path, "wb") as f_:
-                await self.downloader.download_video(f_)
+                await self.downloader.download_video(
+                    f_, self.update_bar_download_factory(loading_bar)
+                )
+            loading_bar.bar = False
+            await loading_bar.update_message(
+                f"{l_title}\nUploading to telegram ..."
+            )
             uploaded = await td_cl_.upload(file_path)
         await self.query.message.reply_to_message.reply_copy(
             Settings.BOT_STORAGE, uploaded.id
         )
 
 
-class SSBVideoDownloadHandle(BaseDownloadHandle):
-    async def handle(self):
+class SSBVideoDownloadHandle(VideoDownloadHandle):
+    async def handle(self, loading_bar):
         quality = self.query.data.rsplit(":", 1)[-1]
         self.downloader.set_quality(quality)
+        l_title = f"{self.downloader.name} ({quality})"
+        await loading_bar.update_message(f"{l_title}\nDownloading ...")
         ssb_cl_ = StreamSBClient()
         with tempfile.TemporaryDirectory() as dir_:
             file_path = os.path.join(dir_, self.downloader.file_name)
             with open(file_path, "wb") as f_:
-                await self.downloader.download_video(f_)
+                await self.downloader.download_video(
+                    f_, self.update_bar_download_factory(loading_bar)
+                )
+            loading_bar.bar = False
+            await loading_bar.update_message(
+                f"{l_title}\nUploading to StreamSB ..."
+            )
             with open(file_path, "rb") as f_:
                 req = await ssb_cl_.upload(f_)
             file_url = ssb_cl_.get_file_url(req[0]["code"])

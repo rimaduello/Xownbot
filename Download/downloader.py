@@ -1,3 +1,4 @@
+import inspect
 import os
 import random
 import re
@@ -59,7 +60,7 @@ class BaseDownloader(ABC):
         self.base_content = data_.content
         self.base_bs4 = BeautifulSoup(self.base_content, "html.parser")
 
-    async def download_video(self, writer):
+    async def download_video(self, writer, update_fn=None):
         log_ = f"{self.url} quality={self.quality['name']} url={self.quality['url']}"
         logger.info(f"video download request: {log_}")
         data_ = await self.session_async.get_async(url=self.quality["url"])
@@ -129,7 +130,7 @@ class BaseM3U8BaseDownloader(BaseDownloader, ABC):
         size = mean(size) * sum([x.duration for x in seg])
         return int(size)
 
-    async def download_video(self, writer):
+    async def download_video(self, writer, update_fn=None):
         log_ = f"{self.url} quality={self.quality['name']} url={self.quality['url']}"
         logger.info(f"video download request: {log_}")
         src_ = self.src_list[self.quality["name"]]
@@ -139,6 +140,11 @@ class BaseM3U8BaseDownloader(BaseDownloader, ABC):
             ):
                 with open(os.path.join(dir_, str(c_)), "wb") as f_:
                     f_.write(d_.content)
+                    if update_fn:
+                        tmp_ = update_fn(total=len(src_.segments), rel=1)
+                        if inspect.iscoroutinefunction(update_fn):
+                            await tmp_
+
             for c_, _ in enumerate(src_.segments):
                 with open(os.path.join(dir_, str(c_)), "rb") as f_:
                     writer.write(f_.read())
