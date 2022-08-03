@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import math
 import os.path
@@ -19,6 +18,7 @@ from telegram.ext import (
 
 from Bot.callbacks import delete_download_request
 from Core.config import Settings
+from Core.db import Mongo
 from Core.logger import get_logger
 from Download.downloader import (
     get_downloader,
@@ -277,6 +277,20 @@ async def download_request(update: Update, context: CallbackContext):
         data=dict(msg=options_msg, hash_str=md_),
     )
     logger.info(f"download request done: {url}")
+
+
+async def user_check(update: Update, context: CallbackContext):
+    async def _is_authed(uid__):
+        return await Mongo.get_collection(
+            Settings.MONGO_COLLECTION_USER
+        ).find_one({"user_id": str(uid__), "active": True})
+
+    u_ = await _is_authed(update.effective_user.id)
+    if u_:
+        context.user_data["active"] = True
+    else:
+        context.user_data["active"] = False
+    update.effective_user.is_premium = u_
 
 
 async def unauthorised(update: Update, _):

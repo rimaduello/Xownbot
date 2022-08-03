@@ -1,0 +1,18 @@
+services:
+
+  mongo:
+    image: mongo
+    hostname: mongo.local
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    restart: unless-stopped
+
+  mongo-express:
+    image: mongo-express
+    hostname: mongo-express.local
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: example
+      ME_CONFIG_MONGODB_URL: mongodb://root:example@mongo.local:27017/
+    restart: unless-stopped

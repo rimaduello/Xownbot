@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseSettings, AnyHttpUrl, Field, validator
-from pydantic.networks import HttpUrl
+from pydantic.networks import HttpUrl, AnyUrl
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -16,10 +16,12 @@ class SettingsCls(BaseSettings):
     BOT_WRITE_TIMEOUT: float = 5
     BOT_POOL_TIMEOUT: float = 5
     BOT_DOWNLOADER_CACHE_PATH: Path = "storage/downloader"
-    BOT_USERS_FILE: Path = "storage/users"
     BOT_STORAGE: int
     TD_API_ID: str
     TD_API_HASH: str
+    MONGO_URI: AnyUrl
+    MONGO_DB: str = "xownbot"
+    MONGO_COLLECTION_USER: str = "users"
     SSB_URL: HttpUrl = "https://api.streamsb.com"
     SSB_TOKEN: str
     SSB_FILE_URL: HttpUrl = "https://sbthe.com"
@@ -30,24 +32,6 @@ class SettingsCls(BaseSettings):
     class Config:
         env_prefix = "XOWNBOT__"
         env_file = ".env"
-
-    # noinspection PyMethodParameters
-    @validator("BOT_DOWNLOADER_CACHE_PATH", always=True)
-    def generate__bot_downloader_cache_path(cls, v, values):
-        v = values["BASE_DIR"] / v
-        return v
-
-    # noinspection PyMethodParameters
-    @validator("BOT_DOWNLOADER_CACHE_PATH", always=True)
-    def create__bot_downloader_cache_path(cls, v):
-        v.mkdir(parents=True, exist_ok=True)
-        return v
-
-    # noinspection PyMethodParameters
-    @validator("BOT_USERS_FILE", always=True)
-    def generate__bot_users_file(cls, v, values):
-        v = values["BASE_DIR"] / v
-        return v
 
 
 @lru_cache
