@@ -1,3 +1,5 @@
+from io import BytesIO
+from pathlib import Path
 from types import MethodType
 
 from aiohttp import ClientSession, FormData, ClientResponse, ContentTypeError
@@ -46,7 +48,7 @@ class StreamSBClient:
             logger.debug(f"patched client proxy {Settings.HTTP_PROXY}")
         return cl_
 
-    async def upload(self, file):
+    async def upload(self, file: BytesIO):
         logger.info(f"upload request: {file.name}")
         upload_url = await self.get_upload_server()
         upload_url = urllib.parse.urlparse(upload_url)
@@ -58,7 +60,7 @@ class StreamSBClient:
         data = FormData()
         data.add_field("api_key", self.access_token)
         data.add_field("json", "1")
-        data.add_field("file", file)
+        data.add_field("file", file, filename=Path(file.name).name)
         async with client_ as cl_:
             _, resp = await self._request(
                 type_="post", path=upload_url.path, client=cl_, data=data
