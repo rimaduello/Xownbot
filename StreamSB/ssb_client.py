@@ -1,6 +1,7 @@
 from io import BytesIO
 from pathlib import Path
 from types import MethodType
+from typing import Union, BinaryIO
 
 from aiohttp import ClientSession, FormData, ClientResponse, ContentTypeError
 
@@ -48,7 +49,7 @@ class StreamSBClient:
             logger.debug(f"patched client proxy {Settings.HTTP_PROXY}")
         return cl_
 
-    async def upload(self, file: BytesIO):
+    async def upload(self, file: Union[BytesIO, BinaryIO]):
         logger.info(f"upload request: {file.name}")
         upload_url = await self.get_upload_server()
         upload_url = urllib.parse.urlparse(upload_url)

@@ -20,14 +20,7 @@ class StorageChatFilter(filters.UpdateFilter):
         return update.effective_chat.id == Settings.BOT_STORAGE
 
 
-class NoneActiveUserFilter(filters.UpdateFilter):
-    def filter(self, update):
-        return update.effective_user.is_premium is None
-
-
 storage_chat_filter = StorageChatFilter()
-
-unauthorised_filter = NoneActiveUserFilter()
 
 
 def run():
@@ -40,9 +33,13 @@ def run():
     app = app.write_timeout(Settings.BOT_WRITE_TIMEOUT)
     app = app.pool_timeout(Settings.BOT_POOL_TIMEOUT)
     app = app.build()
-    app.add_handler(MessageHandler(filters.ALL, handlers.user_check), group=-1)
+    app.add_handler(
+        MessageHandler(
+            filters.ALL & (~storage_chat_filter), handlers.user_auth
+        ),
+        group=-1,
+    )
     app.add_handler(MessageHandler(storage_chat_filter, handlers.dummy))
-    app.add_handler(MessageHandler(unauthorised_filter, handlers.unauthorised))
     app.add_handler(
         MessageHandler(
             filters.TEXT
