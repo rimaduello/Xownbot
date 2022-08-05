@@ -4,7 +4,9 @@ import os.path
 import pickle
 import tempfile
 from abc import abstractmethod
+from datetime import timedelta
 from functools import partial
+from time import time
 from typing import Union
 
 from telegram import (
@@ -17,7 +19,7 @@ from telegram import (
 from telegram.ext import (
     CallbackContext,
 )
-from telegram.helpers import escape_markdown
+from telegram.helpers import escape_markdown, create_deep_linked_url
 
 from Bot.callbacks import delete_download_request
 from Core.config import Settings
@@ -29,6 +31,7 @@ from Download.downloader import (
     BaseDownloader,
     BaseM3U8BaseDownloader,
 )
+from FileServer.file_server import FileObj, FileResultType
 from StreamSB.ssb_client import StreamSBClient
 from TeleDrive.td_client import TeleDriveClient
 
@@ -94,7 +97,11 @@ class BaseHandler:
     def __init__(self, update: Update, context: CallbackContext):
         self.update = update
         self.context = context
+        self.bot = context.bot
         self.query = update.callback_query
+        self.message = update.message
+        self.user = update.effective_user
+        self.user_id = update.effective_user.id
 
     def auth_check(self):
         if self.auth_req:
@@ -214,19 +221,18 @@ class SSBVideoDownloadHandle(VideoDownloadHandle):
 
 class VideoUploadHandle(BaseHandler):
     async def exec(self):
-        message = self.update.message
-        logger.info(f"upload request: {message.video.file_id}")
+        logger.info(f"upload request: {self.message.video.file_id}")
         td_cl = TeleDriveClient()
         ssb_cl = StreamSBClient()
         bot = self.update.effective_chat.get_bot()
         async with LoadingMessage(
-            message,
+            self.message,
             "please wait while fetching requested media ...",
         ):
             fwed = await bot.forward_message(
                 chat_id=Settings.BOT_STORAGE,
                 from_chat_id=self.update.effective_chat.id,
-                message_id=self.update.message.id,
+                message_id=self.message.id,
             )
             with tempfile.TemporaryDirectory() as dir_:
                 file_path_ = await td_cl.download(
@@ -235,10 +241,8 @@ class VideoUploadHandle(BaseHandler):
                 with open(file_path_, "rb") as f_:
                     ssb_file = await ssb_cl.upload(f_)
             file_url = ssb_cl.get_file_url(ssb_file[0]["code"])
-        await message.reply_text(file_url, quote=True)
-        logger.info(
-            f"upload request done: {self.update.message.video.file_id}"
-        )
+        await self.message.reply_text(file_url, quote=True)
+        logger.info(f"upload request done: {self.message.video.file_id}")
 
 
 class DownloadRequestHandle(BaseHandler):
@@ -248,19 +252,18 @@ class DownloadRequestHandle(BaseHandler):
         super(DownloadRequestHandle, self).__init__(
             update=update, context=context
         )
-        self.original_msg: Message = self.update.message
-        self.url = self.original_msg.text
+        self.url = self.message.text
 
     async def exec(self):
-        async with LoadingMessage(self.original_msg, "please wait ..."):
+        async with LoadingMessage(self.message, "please wait ..."):
             await self.get_or_prepare_downloader()
         if self.downloader is None:
             msg = f"this website is not supported. supported ones are {', '.join(DOWNLOADER_MAP.keys())}"
-            await self.original_msg.reply_text(text=msg, quote=True)
+            await self.message.reply_text(text=msg, quote=True)
             return
         md_ = hashlib.md5(self.downloader.url.encode()).hexdigest()
         msg_, kybrd_ = self.download_options(md_)
-        options_msg = await self.original_msg.reply_text(
+        options_msg = await self.message.reply_text(
             text=msg_,
             quote=True,
             reply_markup=kybrd_,
@@ -361,6 +364,25 @@ class DownloadRequestHandle(BaseHandler):
             pickle.dump(downloader_data, f_)
 
 
+class FileListHandle(BaseHandler):
+    def _report(self, _f: FileResultType):
+        name = f"[*{escape_markdown(_f['name'], version=2)}*]({_f['url']})"
+        size = f"__{escape_markdown(str(_f['size']), version=2)}__"
+        ttl = _f["created"] + Settings.FILESERVER_AUTO_DELETE - time()
+        ttl = str(int(ttl))
+        ttl = f"_{md_escape(ttl)} seconds_"
+        return f"➡ {name}\n{size}\n{ttl}\n"
+
+    async def exec(self):
+        u_ = self.user_id
+        fs_ = await FileObj.user(u_)
+        ls_ = fs_.list_files()
+        show_ = [self._report(x) for x in ls_]
+        await self.message.reply_text(
+            text="\n".join(show_), parse_mode=constants.ParseMode.MARKDOWN_V2
+        )
+
+
 async def user_auth(update: Update, context: CallbackContext):
     async def _is_authed(uid__):
         return await Mongo.get_collection(
@@ -383,3 +405,4 @@ video_download = VideoDownloadHandle.run
 ssb_video_download = SSBVideoDownloadHandle.run
 video_upload = VideoUploadHandle.run
 download_request = DownloadRequestHandle.run
+file_list = FileListHandle.run

@@ -22,6 +22,10 @@ class SettingsCls(BaseSettings):
     MONGO_URI: AnyUrl
     MONGO_DB: str = "xownbot"
     MONGO_COLLECTION_USER: str = "users"
+    MONGO_COLLECTION_FILES: str = "files"
+    FILESERVER_ROOT: Path = "storage/fileserver"
+    FILESERVER_URL: HttpUrl
+    FILESERVER_AUTO_DELETE: int = 60 * 60
     SSB_URL: HttpUrl = "https://api.streamsb.com"
     SSB_TOKEN: str
     SSB_FILE_URL: HttpUrl = "https://sbthe.com"
@@ -32,6 +36,11 @@ class SettingsCls(BaseSettings):
     class Config:
         env_prefix = "XOWNBOT__"
         env_file = ".env"
+
+    # noinspection PyMethodParameters
+    @validator("FILESERVER_ROOT", always=True)
+    def generate__fileserver_root(cls, v, values):
+        return values["BASE_DIR"] / v
 
 
 @lru_cache

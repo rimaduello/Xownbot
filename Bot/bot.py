@@ -6,6 +6,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CallbackQueryHandler,
+    CommandHandler,
+    InlineQueryHandler,
 )
 
 from Bot import handlers
@@ -40,6 +42,7 @@ def run():
         group=-1,
     )
     app.add_handler(MessageHandler(storage_chat_filter, handlers.dummy))
+    app.add_handler(CommandHandler("list", handlers.file_list))
     app.add_handler(
         MessageHandler(
             filters.TEXT
