@@ -52,6 +52,7 @@ class TeleDriveClient:
         return res_
 
     async def download(self, msg_id, dir_path):
+        dir_path = dir_path if dir_path.endswith("/") else f"{dir_path}/"
         client_ = self.tg_client
         logger.info(f"download request: {msg_id} to {dir_path}")
         async with client_:

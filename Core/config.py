@@ -42,6 +42,11 @@ class SettingsCls(BaseSettings):
     def generate__fileserver_root(cls, v, values):
         return values["BASE_DIR"] / v
 
+    # noinspection PyMethodParameters
+    @validator("FILESERVER_URL", always=True)
+    def process__fileserver_url(cls, v):
+        return v.rstrip("/")
+
 
 @lru_cache
 def configure():

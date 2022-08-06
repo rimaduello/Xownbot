@@ -50,18 +50,21 @@ def run():
                 filters.Entity(MessageEntity.URL)
                 | filters.Entity(MessageEntity.TEXT_LINK)
             ),
-            handlers.download_request,
+            handlers.url_request,
         )
     )
     app.add_handler(
-        CallbackQueryHandler(handlers.image_download, pattern="^dl:image.+$")
+        CallbackQueryHandler(
+            handlers.url_query,
+            pattern=f"^{handlers.UrlRequestHandle.query_prefix}:.+$",
+        )
     )
     app.add_handler(
-        CallbackQueryHandler(handlers.video_download, pattern="^dl:video.+$")
+        CallbackQueryHandler(
+            handlers.media_query,
+            pattern=f"^{handlers.MediaRequestHandle.query_prefix}:.+$",
+        )
     )
-    app.add_handler(
-        CallbackQueryHandler(handlers.ssb_video_download, pattern="^dl:ssb.+$")
-    )
-    app.add_handler(MessageHandler(filters.VIDEO, handlers.video_upload))
+    app.add_handler(MessageHandler(filters.VIDEO, handlers.media_request))
     logger.info("start pooling ...")
     app.run_polling()

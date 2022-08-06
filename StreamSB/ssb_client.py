@@ -49,8 +49,9 @@ class StreamSBClient:
             logger.debug(f"patched client proxy {Settings.HTTP_PROXY}")
         return cl_
 
-    async def upload(self, file: Union[BytesIO, BinaryIO]):
+    async def upload(self, file: Union[BytesIO, BinaryIO], file_name=None):
         logger.info(f"upload request: {file.name}")
+        file_name = file_name or Path(file.name).name
         upload_url = await self.get_upload_server()
         upload_url = urllib.parse.urlparse(upload_url)
         client_ = await self.get_client(
@@ -61,7 +62,7 @@ class StreamSBClient:
         data = FormData()
         data.add_field("api_key", self.access_token)
         data.add_field("json", "1")
-        data.add_field("file", file, filename=Path(file.name).name)
+        data.add_field("file", file, filename=file_name)
         async with client_ as cl_:
             _, resp = await self._request(
                 type_="post", path=upload_url.path, client=cl_, data=data

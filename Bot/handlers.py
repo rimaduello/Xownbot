@@ -1,13 +1,17 @@
+# todo: pending jobs on startup
+
+from __future__ import annotations
 import hashlib
 import math
 import os.path
 import pickle
 import tempfile
-from abc import abstractmethod
-from datetime import timedelta
+from abc import abstractmethod, ABC
 from functools import partial
+from io import BytesIO
+from pathlib import Path
 from time import time
-from typing import Union
+from typing import Union, BinaryIO, Type
 
 from telegram import (
     Update,
@@ -19,9 +23,8 @@ from telegram import (
 from telegram.ext import (
     CallbackContext,
 )
-from telegram.helpers import escape_markdown, create_deep_linked_url
+from telegram.helpers import escape_markdown
 
-from Bot.callbacks import delete_download_request
 from Core.config import Settings
 from Core.db import Mongo
 from Core.logger import get_logger
@@ -46,13 +49,22 @@ class LoadingMessage:
     bar_val = 0
     _old_text = None
 
-    def __init__(self, original_msg: Message, text: str, bar: bool = False):
+    def __init__(
+        self,
+        original_msg: Message,
+        text: str,
+        bar: bool = False,
+        prefix_icon="☢",
+    ):
         self.original_obj = original_msg
-        self.text = "☢ " + md_escape(text)
+        self.prefix_icon = prefix_icon
+        self.text = f"{self.prefix_icon} {text}"
         self.bar = bar
 
     async def update_message(self, text: str):
-        self.text = md_escape(text)
+        self.text = (
+            "" if text.startswith(self.prefix_icon) else f"{self.prefix_icon} "
+        ) + text
         await self._update_message()
 
     async def update_bar_absolute(self, val):
@@ -80,11 +92,11 @@ class LoadingMessage:
 
     @property
     def text_w_bar(self):
-        t_ = self.text
+        t_ = md_escape(self.text)
         if self.bar:
             bar_shapes = math.floor(self.bar_val / 100 * self.BAR_LENGTH)
             t_ += (
-                f"\n ☢ {md_escape('[')}"
+                f"\n{md_escape('[')}"
                 f"`{md_escape('#') * bar_shapes}{md_escape('-') * (self.BAR_LENGTH - bar_shapes)}`"
                 f"{md_escape(']')} {md_escape(str(int(self.bar_val)) + '%')}"
             )
@@ -127,134 +139,125 @@ class BaseHandler:
             )
 
 
-class BaseDownloadHandle(BaseHandler):
-    downloader: BaseDownloader = None
-    loading_text = "please wait while fetching requested media ..."
-    loading_bar = False
+class BaseRequestHandler(BaseHandler, ABC):
+    query_prefix: str
 
     async def exec(self):
-        query = self.query
-        logger.info(f"download request: {query.data}")
-        hash_str = query.data.split(":", 3)[2]
-        self.downloader = self.context.chat_data[hash_str]
-        await query.answer()
-        lb_ = LoadingMessage(
-            self.query.message, self.loading_text, bar=self.loading_bar
+        req_arg_ = await self.req_arg_gen()
+        if not req_arg_:
+            logger.warning(
+                f"request filed: {self.message} didn't yield any request arg"
+            )
+            return
+        msg_, kybrd_ = self.query_options(req_arg_)
+        options_msg = await self.message.reply_text(
+            text=msg_,
+            quote=True,
+            reply_markup=kybrd_,
+            parse_mode=constants.ParseMode.MARKDOWN_V2,
         )
-        async with lb_:
-            await self.handle(loading_bar=lb_)
-        logger.info(f"download request done: {query.data}")
-
-    @abstractmethod
-    async def handle(self, loading_bar: LoadingMessage):
-        pass
-
-
-class ImageDownloadHandle(BaseDownloadHandle):
-    async def handle(self, loading_bar):
-        for c_, src_ in enumerate(self.downloader.image_urls):
-            with tempfile.TemporaryFile() as f_:
-                await self.downloader.download_image(f_, c_)
-                f_.seek(0)
-                filename = src_.rsplit("/")[-1]
-                await self.query.message.reply_to_message.reply_document(
-                    f_, filename=filename, quote=True
-                )
-
-
-class VideoDownloadHandle(BaseDownloadHandle):
-    loading_bar = True
+        self.context.job_queue.run_once(
+            self.cleanup,
+            Settings.BOT_AUTO_DELETE,
+            chat_id=self.update.effective_message.chat_id,
+            data=dict(msg=options_msg, req_arg=req_arg_),
+        )
+        logger.info(f"request done: {self.message} for {req_arg_}")
 
     @staticmethod
-    def update_bar_download_factory(msg: LoadingMessage):
-        async def _fn(total, rel):
-            await msg.update_bar_relative(rel / total * 100)
+    async def cleanup(context: CallbackContext):
+        data = context.job.data
+        await data["msg"].delete()
+        logger.info(f"cleaned up: {data['req_arg']}")
 
-        return _fn
-
-    async def handle(self, loading_bar):
-        quality = self.query.data.rsplit(":", 1)[-1]
-        self.downloader.set_quality(quality)
-        l_title = f"{self.downloader.name} ({quality})"
-        await loading_bar.update_message(f"{l_title}\nDownloading ...")
-        td_cl_ = TeleDriveClient()
-        with tempfile.TemporaryDirectory() as dir_:
-            file_path = os.path.join(dir_, self.downloader.file_name)
-            with open(file_path, "wb") as f_:
-                await self.downloader.download_video(
-                    f_, self.update_bar_download_factory(loading_bar)
-                )
-            loading_bar.bar = False
-            await loading_bar.update_message(
-                f"{l_title}\nUploading to telegram ..."
-            )
-            uploaded = await td_cl_.upload(file_path)
-        await self.query.message.reply_to_message.reply_copy(
-            Settings.BOT_STORAGE, uploaded.id
+    @classmethod
+    def _query_str(cls, req, req_arg, quality=None):
+        return f"{cls.query_prefix}:{req}:{req_arg}" + (
+            f":{quality}" if quality else ""
         )
 
+    @abstractmethod
+    def query_options(self, req_arg: str) -> (str, InlineKeyboardMarkup):
+        raise NotImplementedError
 
-class SSBVideoDownloadHandle(VideoDownloadHandle):
-    async def handle(self, loading_bar):
-        quality = self.query.data.rsplit(":", 1)[-1]
-        self.downloader.set_quality(quality)
-        l_title = f"{self.downloader.name} ({quality})"
-        await loading_bar.update_message(f"{l_title}\nDownloading ...")
-        ssb_cl_ = StreamSBClient()
-        with tempfile.TemporaryDirectory() as dir_:
-            file_path = os.path.join(dir_, self.downloader.file_name)
-            with open(file_path, "wb") as f_:
-                await self.downloader.download_video(
-                    f_, self.update_bar_download_factory(loading_bar)
-                )
-            loading_bar.bar = False
-            await loading_bar.update_message(
-                f"{l_title}\nUploading to StreamSB ..."
-            )
-            with open(file_path, "rb") as f_:
-                req = await ssb_cl_.upload(f_)
-            file_url = ssb_cl_.get_file_url(req[0]["code"])
-        await self.query.message.reply_to_message.reply_text(
-            file_url, quote=True
+    @abstractmethod
+    async def req_arg_gen(self):
+        raise NotImplementedError
+
+
+class BaseQueryHandler(BaseHandler):
+    loading_bar = None
+    image_reqs = ["image"]
+    video_reqs = ["tg", "direct", "ssb"]
+
+    def __init__(self, update: Update, context: CallbackContext):
+        super().__init__(update, context)
+        self.query_data = self.query.data.split(":")
+        self.req_type = self.query_data[0]
+        self.req = self.query_data[1]
+        self.req_arg = self.query_data[2]
+        self.quality = (
+            self.query_data[3] if len(self.query_data) == 4 else None
         )
 
-
-class VideoUploadHandle(BaseHandler):
     async def exec(self):
-        logger.info(f"upload request: {self.message.video.file_id}")
-        td_cl = TeleDriveClient()
-        ssb_cl = StreamSBClient()
-        bot = self.update.effective_chat.get_bot()
-        async with LoadingMessage(
-            self.message,
-            "please wait while fetching requested media ...",
-        ):
-            fwed = await bot.forward_message(
-                chat_id=Settings.BOT_STORAGE,
-                from_chat_id=self.update.effective_chat.id,
-                message_id=self.message.id,
+        logger.info(f"query request: {self.file_name}")
+        self.loading_bar = LoadingMessage(
+            self.query.message, f"{self.file_name}\nDownloading ...", bar=False
+        )
+        await self.query.answer()
+        async with self.loading_bar:
+            if self.req in self.image_reqs:
+                await self.image_req()
+            if self.req in self.video_reqs:
+                await self.video_req()
+        logger.info(f"query request done: {self.file_name}")
+
+    @abstractmethod
+    async def image_req(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def video_req(self):
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def file_name(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def handle(self, media: Union[BytesIO, BinaryIO], file_name=None):
+        raise NotImplementedError
+
+    @classmethod
+    async def run(cls, update: Update, context: CallbackContext, mix=True):
+        if mix:
+            req = update.callback_query.data.split(":")[1]
+            mix_with = {
+                "image": ToTGMixin,
+                "tg": ToTGMixin,
+                "direct": ToDirectMixin,
+                "ssb": ToSSBMixin,
+            }[req]
+            cls_ = type(f"url_{req}_handler", (mix_with, cls), {})
+            # noinspection PyUnresolvedReferences
+            return await cls_.run(update=update, context=context, mix=False)
+        else:
+            return await super(BaseQueryHandler, cls).run(
+                update=update, context=context
             )
-            with tempfile.TemporaryDirectory() as dir_:
-                file_path_ = await td_cl.download(
-                    msg_id=fwed.id, dir_path=dir_
-                )
-                with open(file_path_, "rb") as f_:
-                    ssb_file = await ssb_cl.upload(f_)
-            file_url = ssb_cl.get_file_url(ssb_file[0]["code"])
-        await self.message.reply_text(file_url, quote=True)
-        logger.info(f"upload request done: {self.message.video.file_id}")
 
 
-class DownloadRequestHandle(BaseHandler):
+class UrlRequestHandle(BaseRequestHandler):
+    query_prefix = "u"
     downloader: DownloaderType = None
 
     def __init__(self, update: Update, context: CallbackContext):
-        super(DownloadRequestHandle, self).__init__(
-            update=update, context=context
-        )
+        super(UrlRequestHandle, self).__init__(update=update, context=context)
         self.url = self.message.text
 
-    async def exec(self):
+    async def req_arg_gen(self):
         async with LoadingMessage(self.message, "please wait ..."):
             await self.get_or_prepare_downloader()
         if self.downloader is None:
@@ -262,23 +265,10 @@ class DownloadRequestHandle(BaseHandler):
             await self.message.reply_text(text=msg, quote=True)
             return
         md_ = hashlib.md5(self.downloader.url.encode()).hexdigest()
-        msg_, kybrd_ = self.download_options(md_)
-        options_msg = await self.message.reply_text(
-            text=msg_,
-            quote=True,
-            reply_markup=kybrd_,
-            parse_mode=constants.ParseMode.MARKDOWN_V2,
-        )
         self.context.chat_data[md_] = self.downloader
-        self.context.job_queue.run_once(
-            delete_download_request,
-            Settings.BOT_AUTO_DELETE,
-            chat_id=self.update.effective_message.chat_id,
-            data=dict(msg=options_msg, hash_str=md_),
-        )
-        logger.info(f"download request done: {self.downloader.url}")
+        return md_
 
-    def download_options(self, hash_str: str):
+    def query_options(self, req_arg: str):
         def _get_kbd_sorted(qualities__):
             return sorted(qualities__, key=lambda d_: d_["size"])
 
@@ -288,8 +278,8 @@ class DownloadRequestHandle(BaseHandler):
         kybrd_ = [
             [
                 InlineKeyboardButton(
-                    f"{x['name']}: {round(x['size'] / (1024 ** 2), 2)} MB",
-                    callback_data=f"dl:video:{hash_str}:{x['name']}",
+                    f"{x['name']}: {FileObj.size_hr(x['size'])}",
+                    callback_data=self._query_str("tg", req_arg, x["name"]),
                 )
             ]
             for x in _get_kbd_sorted(self.downloader.qualities)
@@ -298,7 +288,18 @@ class DownloadRequestHandle(BaseHandler):
             [
                 InlineKeyboardButton(
                     "StreamSB " + x["name"],
-                    callback_data=f"dl:ssb:{hash_str}:{x['name']}",
+                    callback_data=self._query_str("ssb", req_arg, x["name"]),
+                )
+            ]
+            for x in _get_kbd_sorted(self.downloader.qualities)
+        ]
+        kybrd_ += [
+            [
+                InlineKeyboardButton(
+                    "Direct " + x["name"],
+                    callback_data=self._query_str(
+                        "direct", req_arg, x["name"]
+                    ),
                 )
             ]
             for x in _get_kbd_sorted(self.downloader.qualities)
@@ -308,12 +309,18 @@ class DownloadRequestHandle(BaseHandler):
                 [
                     InlineKeyboardButton(
                         f"images ({len(self.downloader.image_urls)})",
-                        callback_data=f"dl:image:{hash_str}",
+                        callback_data=self._query_str("image", req_arg),
                     )
                 ]
             )
         kybrd_ = InlineKeyboardMarkup(kybrd_)
         return msg_, kybrd_
+
+    @staticmethod
+    async def cleanup(context: CallbackContext):
+        await BaseRequestHandler.cleanup(context)
+        data = context.job.data
+        context.chat_data.pop(data["req_arg"], None)
 
     async def get_or_prepare_downloader(self):
         logger.info(f"download request: {self.url}")
@@ -364,8 +371,187 @@ class DownloadRequestHandle(BaseHandler):
             pickle.dump(downloader_data, f_)
 
 
+class MediaRequestHandle(BaseRequestHandler):
+    query_prefix = "m"
+
+    async def req_arg_gen(self):
+        fwed = await self.bot.forward_message(
+            chat_id=Settings.BOT_STORAGE,
+            from_chat_id=self.update.effective_chat.id,
+            message_id=self.message.id,
+        )
+        return fwed.id
+
+    def query_options(self, req_arg: str) -> (str, InlineKeyboardMarkup):
+        msg_ = f"*{md_escape(self.message.video.file_name)}*\n"
+        msg_ += f"__{md_escape(FileObj.size_hr(self.message.video.file_size * 1024))}__"
+        kybrd_ = [
+            [
+                InlineKeyboardButton(
+                    "StreamSB",
+                    callback_data=self._query_str("ssb", req_arg),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "Direct link",
+                    callback_data=self._query_str("direct", req_arg),
+                )
+            ],
+        ]
+        kybrd_ = InlineKeyboardMarkup(kybrd_)
+        return msg_, kybrd_
+
+
+class UrlQueryHandle(BaseQueryHandler):
+    def __init__(self, update: Update, context: CallbackContext):
+        super().__init__(update, context)
+        self.downloader: BaseDownloader = context.chat_data[self.req_arg]
+
+    async def image_req(self):
+        self.loading_bar.bar = False
+        for c_, src_ in enumerate(self.downloader.image_urls):
+            with tempfile.TemporaryFile() as f_:
+                await self.downloader.download_image(f_, c_)
+                f_.seek(0)
+                filename = src_.rsplit("/")[-1]
+                return await self.handle(f_, filename)
+
+    async def video_req(self):
+        self.loading_bar.bar = True
+        self.downloader.set_quality(self.quality)
+        with tempfile.TemporaryDirectory() as dir_:
+            file_path = os.path.join(dir_, self.downloader.file_name)
+            with open(file_path, "wb") as f_:
+                await self.downloader.download_video(
+                    f_, self._update_loading_bar
+                )
+                f_.seek(0)
+                filename = self.downloader.file_name
+                return await self.handle(f_, filename)
+
+    @property
+    def file_name(self):
+        return f"{self.downloader.name} ({self.quality or self.req})"
+
+    @abstractmethod
+    async def handle(self, media: Union[BytesIO, BinaryIO], file_name=None):
+        pass
+
+    async def _update_loading_bar(self, total, rel):
+        await self.loading_bar.update_bar_relative(rel / total * 100)
+
+
+class MediaQueryHandle(BaseQueryHandler):
+    async def image_req(self):
+        raise NotImplementedError
+
+    async def video_req(self):
+        with tempfile.TemporaryDirectory() as dir_:
+            td_cl = TeleDriveClient()
+            file_path = await td_cl.download(
+                msg_id=int(self.req_arg), dir_path=dir_
+            )
+            with open(file_path, "rb") as f_:
+                await self.handle(f_, self.file_name)
+
+    @property
+    def file_name(self):
+        return self.query.message.reply_to_message.video.file_name
+
+    @abstractmethod
+    async def handle(self, media: Union[BytesIO, BinaryIO], file_name=None):
+        pass
+
+
+class ToTGMixin:
+    async def handle(
+        self: BaseQueryHandler, media: Union[BytesIO, BinaryIO], file_name=None
+    ):
+        logger.info(f"uploading to telegram: {media.name}")
+        file_name = file_name or Path(media.name).name
+        if self.req in self.image_reqs:
+            logger.debug(f"uploading image to tg: {media.name}")
+            await self.query.message.reply_to_message.reply_document(
+                media, filename=file_name, quote=True
+            )
+        elif self.req in self.video_reqs:
+            td_cl_ = TeleDriveClient()
+            self.loading_bar.bar = False
+            await self.loading_bar.update_message(
+                self.loading_bar.text.split("\n", 1)[0]
+                + "\nuploading to telegram ..."
+            )
+            logger.debug(f"uploading video to tg: {media.name}")
+            uploaded = await td_cl_.upload(media.name)
+            await self.query.message.reply_to_message.reply_copy(
+                Settings.BOT_STORAGE, uploaded.id
+            )
+
+
+class ToSSBMixin:
+    async def handle(
+        self: BaseQueryHandler, media: Union[BytesIO, BinaryIO], file_name=None
+    ):
+        logger.info(f"uploading to ssb: {media.name}")
+        file_name = file_name or Path(media.name).name
+        ssb_cl_ = StreamSBClient()
+        self.loading_bar.bar = False
+        await self.loading_bar.update_message(
+            self.loading_bar.text.split("\n", 1)[0]
+            + "\nuploading to StreamSB ..."
+        )
+        with open(media.name, "rb") as media_:
+            req = await ssb_cl_.upload(media_, file_name=file_name)
+        file_url = ssb_cl_.get_file_url(req[0]["code"])
+        msg_ = (
+            f"*{md_escape('StreamSB:')} *[{md_escape(file_name)}]({file_url})"
+        )
+        await self.query.message.reply_to_message.reply_text(
+            msg_, quote=True, parse_mode=constants.ParseMode.MARKDOWN_V2
+        )
+
+
+class ToDirectMixin:
+    async def handle(
+        self: Type[BaseQueryHandler, ToDirectMixin],
+        media: Union[BytesIO, BinaryIO],
+        _,
+    ):
+        logger.info(f"making direct link: {media.name}")
+        file_cl_ = await FileObj.user(self.user_id)
+        self.loading_bar.bar = False
+        await self.loading_bar.update_message(
+            self.loading_bar.text.split("\n", 1)[0]
+            + "\ngenerating direct link ..."
+        )
+        path_read = Path(media.name)
+        url_ = await file_cl_.save_file(path_read)
+        msg_ = f"*{md_escape('direct link:')} *[{md_escape(path_read.name)}]({url_})"
+        msg_ = await self.query.message.reply_to_message.reply_text(
+            msg_, quote=True, parse_mode=constants.ParseMode.MARKDOWN_V2
+        )
+        self.context.job_queue.run_once(
+            self.cleanup,
+            Settings.FILESERVER_AUTO_DELETE,
+            chat_id=self.update.effective_message.chat_id,
+            data=dict(
+                user_id=self.user_id, file_name=path_read.name, msg=msg_
+            ),
+        )
+
+    @staticmethod
+    async def cleanup(context: CallbackContext):
+        data = context.job.data
+        file_cl_ = await FileObj.user(data["user_id"])
+        file_cl_.del_file(data["file_name"])
+        await data["msg"].delete()
+        logger.info(f"cleaned up: {data}")
+
+
 class FileListHandle(BaseHandler):
-    def _report(self, _f: FileResultType):
+    @staticmethod
+    def _report(_f: FileResultType):
         name = f"[*{escape_markdown(_f['name'], version=2)}*]({_f['url']})"
         size = f"__{escape_markdown(str(_f['size']), version=2)}__"
         ttl = _f["created"] + Settings.FILESERVER_AUTO_DELETE - time()
@@ -400,9 +586,8 @@ async def dummy(_, __):
 
 md_escape = partial(escape_markdown, version=2)
 
-image_download = ImageDownloadHandle.run
-video_download = VideoDownloadHandle.run
-ssb_video_download = SSBVideoDownloadHandle.run
-video_upload = VideoUploadHandle.run
-download_request = DownloadRequestHandle.run
+url_request = UrlRequestHandle.run
+media_request = MediaRequestHandle.run
+url_query = UrlQueryHandle.run
+media_query = MediaQueryHandle.run
 file_list = FileListHandle.run

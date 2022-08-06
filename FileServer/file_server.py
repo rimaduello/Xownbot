@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import urllib.parse
 from ctypes import Union
-from io import BytesIO
 from pathlib import Path
 from typing import TypedDict, List
 from uuid import uuid4
@@ -29,12 +28,8 @@ class FileObj:
         self.user_id = user_id
         self.user_data = user_data
 
-    async def save_file(self, file: Union[BytesIO, Path, str]):
-        if isinstance(file, BytesIO):
-            file = file.name
-        if isinstance(file, str):
-            file = Path(file)
-        write_path = await self.abs_path(file.name)
+    async def save_file(self, file: Path):
+        write_path = self.abs_path(file.name)
         await self._save_file(file, write_path)
         return self.abs_link(file.name)
 
@@ -45,7 +40,7 @@ class FileObj:
             "url": self.abs_link(file_name),
         }
         state_ = data_["path"].stat()
-        size_ = state_.st_size
+        size_ = state_.st_size * 1024
         if human_readable:
             size_ = self.size_hr(size_)
         data_["size"] = size_
@@ -89,10 +84,9 @@ class FileObj:
 
     @staticmethod
     def _get_abs_link(uid: str, file_name: str):
-        if not uid.endswith("/"):
-            uid = uid + "/"
-        file_path = uid + file_name
-        return urllib.parse.urljoin(Settings.FILESERVER_URL, file_path)
+        file_path = "/".join([uid, file_name])
+        file_path = urllib.parse.quote(file_path)
+        return f"{Settings.FILESERVER_URL}/{file_path}"
 
     @staticmethod
     async def _save_file(file_read_path: Path, file_write_path: Path):
