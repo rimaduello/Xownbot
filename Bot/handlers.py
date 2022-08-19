@@ -296,7 +296,7 @@ class UrlRequestHandle(BaseRequestHandler):
         kybrd_ += [
             [
                 InlineKeyboardButton(
-                    "Direct " + x["name"],
+                    f"Direct {x['name']}: {FileObj.size_hr(x['size'])}",
                     callback_data=self._query_str(
                         "direct", req_arg, x["name"]
                     ),
