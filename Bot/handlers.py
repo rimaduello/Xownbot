@@ -273,7 +273,7 @@ class UrlRequestHandle(BaseRequestHandler):
             return sorted(qualities__, key=lambda d_: d_["size"])
 
         msg_ = f"*{md_escape(self.downloader.name)}*"
-        for k_, v_ in self.downloader.meta.items():
+        for k_, v_ in self.downloader.metadata.items():
             msg_ += f"\n⭕ _{md_escape(str(k_))}: {md_escape(str(v_))}_"
         kybrd_ = [
             [
@@ -329,46 +329,10 @@ class UrlRequestHandle(BaseRequestHandler):
         except KeyError:
             logger.warning(f"unsupported website: {self.url}")
             return
-        cache_ = self._get_downloader_cache()
-        if cache_:
-            pass
-        else:
+        self.downloader.load(not_exist_ok=True)
+        if not self.downloader.prepared:
             await self.downloader.prepare()
-            self._set_downloader_cache()
-
-    def _get_downloader_cache(self):
-        md_ = hashlib.md5(self.downloader.url.encode()).hexdigest()
-        file_ = Settings.BOT_DOWNLOADER_CACHE_PATH / md_
-        if not file_.is_file():
-            logger.debug(f"downloader cache not found: {md_}")
-            return False
-        with open(file_, "rb") as f_:
-            downloader_data = pickle.load(f_)
-        logger.debug(f"loading downloader from cache: {downloader_data}")
-        self.downloader.name = downloader_data["name"]
-        self.downloader.meta = downloader_data["meta"]
-        self.downloader.base_content = downloader_data["base_content"]
-        self.downloader.qualities = downloader_data["qualities"]
-        self.downloader.image_urls = downloader_data["image_urls"]
-        if isinstance(self.downloader, BaseM3U8BaseDownloader):
-            self.downloader.src_list = downloader_data["src_list"]
-        return True
-
-    def _set_downloader_cache(self):
-        md_ = hashlib.md5(self.downloader.url.encode()).hexdigest()
-        file_ = Settings.BOT_DOWNLOADER_CACHE_PATH / md_
-        downloader_data = {
-            "name": self.downloader.name,
-            "meta": self.downloader.meta,
-            "base_content": self.downloader.base_content,
-            "qualities": self.downloader.qualities,
-            "image_urls": self.downloader.image_urls,
-        }
-        if isinstance(self.downloader, BaseM3U8BaseDownloader):
-            downloader_data["src_list"] = self.downloader.src_list
-        logger.debug(f"dumping self.downloader cache: {downloader_data}")
-        with open(file_, "wb") as f_:
-            pickle.dump(downloader_data, f_)
+            self.downloader.save()
 
 
 class MediaRequestHandle(BaseRequestHandler):

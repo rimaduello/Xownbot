@@ -1,5 +1,7 @@
+import hashlib
 import inspect
 import os
+import pickle
 import random
 import re
 import tempfile
@@ -13,6 +15,7 @@ import m3u8
 from bs4 import BeautifulSoup
 from m3u8 import M3U8
 
+from Core.config import Settings
 from Core.logger import get_logger
 from Download.http import HttpSession, AioHttpSession
 
@@ -30,17 +33,29 @@ class BaseDownloader(ABC):
     qualities: List[Quality]
     image_urls: List
 
+    META = [
+        "url",
+        "name",
+        "metadata",
+        "base_content",
+        "qualities",
+        "image_urls",
+        "md_hash",
+    ]
+
     def __init__(self, url):
         self.url = url
         self.session = HttpSession()
         self.session_async = AioHttpSession()
         self.name = None
-        self.meta = {}
+        self.metadata = {}
         self.base_content = None
         self.base_bs4 = None
         self.qualities = []
         self.quality = None
         self.image_urls = []
+        self.prepared = False
+        self.md_hash = hashlib.md5(url.encode()).hexdigest()
 
     async def prepare(self):
         logger.info(f"preparing for {self.url}")
@@ -51,9 +66,10 @@ class BaseDownloader(ABC):
         await self.get_image_urls()
         logger.info(
             f"preparing for {self.url}: name={self.name} "
-            f"size={len(self.base_content)} meta={self.meta} "
+            f"size={len(self.base_content)} metadata={self.metadata} "
             f"qualities={self.qualities} images={self.image_urls}"
         )
+        self.prepared = True
 
     async def get_base_content(self):
         data_ = await self.session_async.get_async(url=self.url)
@@ -80,6 +96,35 @@ class BaseDownloader(ABC):
                 self.quality = q_
                 break
 
+    def save(self):
+        meta_ = {}
+        file_ = self.save_file_path
+        for m_ in self.META:
+            meta_[m_] = getattr(self, m_)
+        logger.debug(f"dumping self: {meta_}")
+        with open(file_, "wb") as f_:
+            pickle.dump(meta_, f_)
+
+    def load(self, not_exist_ok=True):
+        file_ = self.save_file_path
+        if not file_.is_file():
+            if not not_exist_ok:
+                raise FileNotFoundError
+            logger.warning(
+                f"file {file_} for url {self.url} with md hash {self.md_hash} not found"
+            )
+            return
+        with open(file_, "rb") as f_:
+            meta_ = pickle.load(f_)
+        logger.debug(f"loading self: {meta_}")
+        for m_ in self.META:
+            setattr(self, m_, meta_[m_])
+        self.prepared = True
+
+    @property
+    def save_file_path(self):
+        return Settings.DOWNLOADER_SAVE_PATH / self.md_hash
+
     @abstractmethod
     async def get_name(self):
         pass
@@ -105,6 +150,7 @@ class BaseDownloader(ABC):
 class BaseM3U8BaseDownloader(BaseDownloader, ABC):
     src_list: Dict[str, M3U8]
     size_estimate_sample = 10
+    META = BaseDownloader.META + ["src_list"]
 
     def __init__(self, *args, **kwargs):
         super(BaseM3U8BaseDownloader, self).__init__(*args, **kwargs)
@@ -171,7 +217,7 @@ class PornEZ(BaseM3U8BaseDownloader):
     async def get_meta(self):
         for i_ in self._base_bs4.find_all("meta"):
             if i_.attrs.get("itemprop", "") == "duration":
-                self.meta["duration"] = isodate.parse_duration(
+                self.metadata["duration"] = isodate.parse_duration(
                     i_.attrs["content"]
                 )
                 break
@@ -208,7 +254,7 @@ class XVideos(BaseM3U8BaseDownloader):
         dur = re.findall(r'"duration":\s"(.+)",', self.base_content.decode())[
             0
         ]
-        self.meta["duration"] = isodate.parse_duration(dur)
+        self.metadata["duration"] = isodate.parse_duration(dur)
 
     async def get_qualities(self):
         main_src_url = re.findall(

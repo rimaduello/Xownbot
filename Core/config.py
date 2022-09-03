@@ -15,7 +15,6 @@ class SettingsCls(BaseSettings):
     BOT_READ_TIMEOUT: float = 5
     BOT_WRITE_TIMEOUT: float = 5
     BOT_POOL_TIMEOUT: float = 5
-    BOT_DOWNLOADER_CACHE_PATH: Path = "storage/downloader"
     BOT_STORAGE: int
     TD_API_ID: str
     TD_API_HASH: str
@@ -30,6 +29,7 @@ class SettingsCls(BaseSettings):
     SSB_TOKEN: str
     SSB_FILE_URL: HttpUrl = "https://sbthe.com"
     DOWNLOADER_THROTTLING: int = 10
+    DOWNLOADER_SAVE_PATH: Path = "storage/downloader"
     HTTP_PROXY: Optional[AnyHttpUrl] = None
     LOG_LEVEL: str = "WARNING"
 
