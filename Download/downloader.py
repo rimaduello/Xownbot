@@ -242,9 +242,9 @@ DOWNLOADER_MAP = {"pornez.net": PornEZ, "xvideos.com": XVideos}
 
 
 def get_downloader(url) -> BaseDownloader:
+    url = urllib.parse.quote(url, safe="%/:=&?~#+!$,;'@()*[]")
     scheme, netloc, path, qs, anchor = urllib.parse.urlsplit(url)
     if netloc.startswith("www."):
         netloc = netloc[len("www.") :]
-    path = urllib.parse.quote(path, "/%")
-    url_parsed = urllib.parse.urlunsplit((scheme, netloc, path, None, None))
+    url_parsed = urllib.parse.urlunsplit((scheme, netloc, path, qs, anchor))
     return DOWNLOADER_MAP[netloc](url_parsed)
