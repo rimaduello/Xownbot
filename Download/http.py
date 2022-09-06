@@ -1,18 +1,18 @@
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from functools import partialmethod
-from typing import Callable
+from typing import Callable, Optional
 
 import aiohttp
-import requests
 
 from Core.config import Settings
-from Core.logger import get_logger
+from Core.logger import get_logger, call_log
 
-logger = get_logger("downloader-http")
+logger = get_logger(__name__)
 
 
-class BaseSession(ABC):
+class BaseClient(ABC):
     @property
     def proxy(self):
         return Settings.HTTP_PROXY
@@ -26,52 +26,12 @@ class BaseSession(ABC):
         raise NotImplementedError
 
 
-class HttpSession(BaseSession):
-    def __init__(self, *args, **kwargs):
-        self.session = requests.Session()
-        self.session.proxies = self.proxy
-        super(HttpSession, self).__init__(*args, **kwargs)
-        logger.debug(
-            f"http session created: {self.session} args={args} kwargs={kwargs} proxy={self.proxy}"
-        )
-
-    @property
-    def proxy(self):
-        prxy = super(HttpSession, self).proxy
-        if prxy:
-            prxy = {
-                "http": prxy,
-                "https": prxy,
-            }
-        return prxy
-
-    def get(self, url, **kwargs):
-        return self._request("get", url, **kwargs)
-
-    def head(self, url, **kwargs):
-        return self._request("head", url, **kwargs)
-
-    def _request(self, type_, url, **kwargs):
-        fn_ = {
-            "get": self.session.get,
-            "post": self.session.post,
-            "head": self.session.head,
-        }[type_]
-        logger.debug(f"{type_} request: url={url} kwargs={kwargs}")
-        res = fn_(url=url, **kwargs)
-        logger.debug(
-            f"{type_} request done: {url} {res.status_code} {res.content}"
-        )
-        return res
-
-
-class AioHttpSession(BaseSession):
+class AioHttpClient(BaseClient):
     GET_KEY = "get"
     HEAD_KEY = "head"
 
     def __init__(self):
-        super(AioHttpSession, self).__init__()
-        logger.debug("aiohttp session created")
+        super(AioHttpClient, self).__init__()
 
     @property
     def session(self):
@@ -85,65 +45,71 @@ class AioHttpSession(BaseSession):
             self.GET_KEY: session.get,
             self.HEAD_KEY: session.head,
         }
-        return _call_map[fn]
+        cl_ = _call_map[fn]
+        return cl_
 
-    async def _call_async(self, fn, url, session=None, *args, **kwargs):
-        close_flag = False if session else True
-        session = session or self.session
-        logger.debug(
-            f"async {fn} request: url={url} session={session} args={args} kwargs={kwargs}"
-        )
-        fn = self._get_call_fn(session, fn)
-        async with fn(url=url, proxy=self.proxy, *args, **kwargs) as resp:
-            raw = await resp.read()
-        if close_flag:
-            await session.close()
-            logger.debug(f"session {session} closed [close_flag=True]")
-        resp.content = raw
-        logger.debug(f"async {fn} request done: {url} {resp.status} {raw}")
-        return resp
-
-    async def _call_many_async(
-        self, fn, urls: list, session=None, *args, **kwargs
+    @call_log(logger)
+    def _call_async(
+        self,
+        fn,
+        *_,
+        url,
+        session: Optional[aiohttp.ClientSession] = None,
+        **kwargs,
     ):
-        async def _call(counter, *args_, **kwargs_):
-            res_ = await self._call_async(*args_, **kwargs_)
-            return counter, res_
+        session = session or self.session
+        fn = self._get_call_fn(session, fn)
+        req = _AsyncRequestCall(
+            session, fn, url=url, proxy=self.proxy, **kwargs
+        )
+        return req
 
-        close_flag = False if session else True
+    @call_log(logger)
+    async def _call_many_async(
+        self,
+        fn,
+        *_,
+        urls: list,
+        session: Optional[aiohttp.ClientSession] = None,
+        **kwargs,
+    ):
+        async def _call(counter, **kwargs_):
+            return counter, await self._call_async(**kwargs_)()
+
         session = session or self.session
         tasks = [
-            _call(counter=c_, fn=fn, url=x, session=session, *args, **kwargs)
+            _call(counter=c_, fn=fn, url=x, session=session, **kwargs)
             for c_, x in enumerate(urls)
         ]
         for t_ in asyncio.as_completed(tasks):
             res = await t_
             yield res
-        if close_flag:
-            await session.close()
+        await session.close()
 
-    @staticmethod
-    async def _call_generator(fn):
-        res = []
-        async for val in fn:
-            res.append(val)
-        return res
+    get: Callable = partialmethod(_call_async, fn=GET_KEY)
+    head: Callable = partialmethod(_call_async, fn=HEAD_KEY)
+    get_many: Callable = partialmethod(_call_many_async, fn=GET_KEY)
+    head_many: Callable = partialmethod(_call_many_async, fn=HEAD_KEY)
 
-    def _call_sync(self, fn, *args, **kwargs):
-        fn = getattr(self, fn)
-        called = fn(*args, **kwargs)
-        logger.debug(f"sync {fn} request: args={args} kwargs={kwargs}")
-        if asyncio.iscoroutine(called):
-            return asyncio.run(called)
-        else:
-            return asyncio.run(self._call_generator(called))
 
-    get_async: Callable = partialmethod(_call_async, fn=GET_KEY)
-    head_async: Callable = partialmethod(_call_async, fn=HEAD_KEY)
-    get_many_async: Callable = partialmethod(_call_many_async, fn=GET_KEY)
-    head_many_async: Callable = partialmethod(_call_many_async, fn=HEAD_KEY)
+class _AsyncRequestCall:
+    def __init__(self, session, function, *args, **kwargs):
+        self.session = session
+        self.function = function
+        self.call_args = args
+        self.call_kwargs = kwargs
 
-    get: Callable = partialmethod(_call_sync, fn="get_async")
-    head: Callable = partialmethod(_call_sync, fn="head_async")
-    get_many: Callable = partialmethod(_call_sync, fn="get_many_async")
-    head_many: Callable = partialmethod(_call_sync, fn="head_many_async")
+    @call_log(logger)
+    async def __aenter__(self):
+        self.req_obj = await self()
+        return self.req_obj
+
+    @call_log(logger)
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.req_obj.release()
+        await self.session.close()
+
+    @call_log(logger)
+    async def __call__(self):
+        resp = await self.function(*self.call_args, **self.call_kwargs)
+        return resp

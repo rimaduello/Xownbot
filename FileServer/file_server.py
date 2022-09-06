@@ -11,6 +11,7 @@ import aiofiles
 from Core.config import Settings
 from Core.db import Mongo
 from FileServer.exception import FileAlreadyExists, FileNotExists
+from utils.helpers import size_hr
 
 
 class FileResultType(TypedDict):
@@ -42,7 +43,7 @@ class FileObj:
         state_ = data_["path"].stat()
         size_ = state_.st_size * 1024
         if human_readable:
-            size_ = self.size_hr(size_)
+            size_ = size_hr(size_)
         data_["size"] = size_
         data_["created"] = state_.st_ctime
         return FileResultType(**data_)
@@ -106,14 +107,6 @@ class FileObj:
     @staticmethod
     def _del_file(file_path: Path, missing_ok=True):
         file_path.unlink(missing_ok)
-
-    @staticmethod
-    def size_hr(val, suffix="B"):
-        for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
-            if abs(val) < 1024.0:
-                return f"{val:3.1f}{unit}{suffix}"
-            val /= 1024.0
-        return f"{val:.1f}Yi{suffix}"
 
     @classmethod
     async def user(cls, user_id, create=True) -> FileObj:
