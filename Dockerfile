@@ -1,4 +1,4 @@
-FROM python:3.8.1-slim as python-base
+FROM python:3.9.13-slim AS python-base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=off \

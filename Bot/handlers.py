@@ -15,6 +15,7 @@ from pathlib import Path
 from time import time
 from typing import Union, BinaryIO, Type
 
+import aiofiles
 from telegram import (
     Update,
     Message,
@@ -37,6 +38,7 @@ from Download.downloader import (
     BaseM3U8Downloader,
     Source,
 )
+from Download.exception import DownloadException, DownloadError
 from FileServer.file_server import FileObj, FileResultType
 from TeleDrive.td_client import TeleDriveClient
 from utils.helpers import size_hr
@@ -276,10 +278,11 @@ class UrlRequestHandle(BaseRequestHandler):
         self.url = self.message.text
 
     async def req_arg_gen(self):
-        async with LoadingMessage(self.message, "please wait ..."):
-            await self.get_or_prepare_downloader()
-        if self.downloader is None:
-            msg = f"this website is not supported. supported ones are {', '.join(DOWNLOADER_MAP.keys())}"
+        try:
+            async with LoadingMessage(self.message, "please wait ..."):
+                await self.get_or_prepare_downloader()
+        except DownloadException as e:
+            msg = str(e)
             await self.message.reply_text(text=msg, quote=True)
             return
         md_ = hashlib.md5(self.downloader.url.encode()).hexdigest()
@@ -385,8 +388,12 @@ class UrlQueryHandle(BaseQueryHandler):
         )
         self.loading_bar.bar = False
         for c_, src_ in enumerate(self.downloader.image_list):
-            with tempfile.TemporaryFile() as f_:
-                await self.downloader.download_image(f_, c_)
+            with tempfile.NamedTemporaryFile() as f_:
+                try:
+                    await self.downloader.download_image(Path(f_.name), c_)
+                except DownloadError as e:
+                    self._log(_function_logger, logging.ERROR, str(e))
+                    continue
                 f_.seek(0)
                 filename = src_.rsplit("/")[-1]
                 await self.handle(f_, filename)
@@ -400,12 +407,11 @@ class UrlQueryHandle(BaseQueryHandler):
         )
         self.loading_bar.bar = True
         with tempfile.TemporaryDirectory() as dir_:
-            file_path = os.path.join(dir_, self.downloader.file_name)
-            with open(file_path, "wb") as f_:
-                await self.downloader.download_video(
-                    self.source_index, f_, self._update_loading_bar
-                )
-                f_.seek(0)
+            file_path = Path(dir_) / self.downloader.file_name
+            await self.downloader.download_video(
+                self.source_index, file_path, self._update_loading_bar
+            )
+            with open(file_path, "rb") as f_:
                 filename = self.downloader.file_name
                 await self.handle(f_, filename)
 
@@ -421,8 +427,12 @@ class UrlQueryHandle(BaseQueryHandler):
     async def handle(self, media: Union[BytesIO, BinaryIO], file_name=None):
         pass
 
-    async def _update_loading_bar(self, total, rel):
-        await self.loading_bar.update_bar_relative(rel / total * 100)
+    async def _update_loading_bar(self, total, complete):
+        if total == 0:
+            val = 0
+        else:
+            val = complete / total * 100
+        await self.loading_bar.update_bar_absolute(val)
 
 
 class MediaQueryHandle(BaseQueryHandler):

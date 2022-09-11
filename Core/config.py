@@ -9,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class SettingsCls(BaseSettings):
-    BASE_DIR: Path = Field(default=BASE_DIR, const=BASE_DIR)
+    BASE_DIR: Path = Field(default=BASE_DIR, const=True)
     BOT_KEY: str
     BOT_AUTO_DELETE: float = 60 * 10
     BOT_READ_TIMEOUT: float = 5
@@ -25,11 +25,12 @@ class SettingsCls(BaseSettings):
     FILESERVER_ROOT: Path = "storage/fileserver"
     FILESERVER_URL: HttpUrl
     FILESERVER_AUTO_DELETE: int = 60 * 60
-    SSB_URL: HttpUrl = "https://api.streamsb.com"
-    SSB_TOKEN: str
-    SSB_FILE_URL: HttpUrl = "https://sbthe.com"
     DOWNLOADER_THROTTLING: int = 10
+    DOWNLOADER_ARIA2_URL: AnyUrl
+    DOWNLOADER_ARIA2_TOKEN: str
+    DOWNLOADER_ARIA2_DIR: Path = "storage/aria2/downloads"
     DOWNLOADER_SAVE_PATH: Path = "storage/downloader"
+    DOWNLOADER_IO_CHUNK: int = 1e6
     HTTP_PROXY: Optional[AnyHttpUrl] = None
     LOG_LEVEL: str = "WARNING"
 
