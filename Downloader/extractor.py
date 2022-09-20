@@ -1,7 +1,9 @@
 import inspect
+import json
 import re
 import sys
 from abc import abstractmethod, ABCMeta
+from datetime import timedelta
 from typing import List, Union, Optional, Type
 
 import isodate
@@ -47,10 +49,6 @@ class BaseExtractor(AutoCallMixin, metaclass=ABCMeta):
     # ===========================================================
     @call_log(logger)
     async def _get_content(self, url: Optional[URLOrStr] = None):
-        if url is None and {"content__raw", "content__bs"}.issubset(
-            self._context.keys()
-        ):
-            return self._context["content__raw"], self._context["content__bs"]
         url = url or self.url
         async with AioHttpClient().get(url=url) as data_:
             content = await data_.read()
@@ -64,7 +62,7 @@ class BaseExtractor(AutoCallMixin, metaclass=ABCMeta):
     @call_log(logger)
     async def _extract__title__20(self):
         # noinspection PyUnresolvedReferences
-        return {"title": (await self._get_content())[1].title.text}
+        return {"title": self._context["content__bs"].title.text}
 
     @call_log(logger)
     async def _extract__post_process__100(self):
@@ -83,7 +81,7 @@ class XVideosExtractor(BaseExtractor):
 
     @call_log(logger)
     async def _extract__metadata__30(self):
-        content__raw, content__bs = await self._get_content()
+        content__raw = self._context["content__raw"]
         metadata = {}
         dur = re.findall(r'"duration":\s"(.+)",', content__raw.decode())[0]
         metadata["duration"] = isodate.parse_duration(dur).__str__()
@@ -91,7 +89,10 @@ class XVideosExtractor(BaseExtractor):
 
     @call_log(logger)
     async def _extract__image_src__40(self):
-        content__raw, content__bs = await self._get_content()
+        content__raw, content__bs = (
+            self._context["content__raw"],
+            self._context["content__bs"],
+        )
         srcs = []
         img_url = re.findall(
             r"html5player\.setThumbSlideBig\('(.+)'\);",
@@ -106,7 +107,7 @@ class XVideosExtractor(BaseExtractor):
 
     @call_log(logger)
     async def _extract__video_src__50(self):
-        content__raw, content__bs = await self._get_content()
+        content__raw = self._context["content__raw"]
         playlist_url = re.findall(
             r"html5player\.setVideoHLS\('(.+)'\);", content__raw.decode()
         )[0]
@@ -136,7 +137,8 @@ class PornEZExtractor(BaseExtractor):
 
     async def _extract__metadata__30(self):
         metadata = {}
-        for i_ in self._context["content__bs"].find_all("meta"):
+        content__bs = self._context["content__bs"]
+        for i_ in content__bs.find_all("meta"):
             if i_.attrs.get("itemprop", "") == "duration":
                 metadata["duration"] = isodate.parse_duration(
                     i_.attrs["content"]
@@ -219,6 +221,67 @@ class TubePornClassicExtractor(BaseExtractor):
         else:
             raise NotSupportedFile()
         srcs = [src_]
+        return {"src_video": srcs}
+
+    @call_log(logger)
+    async def _extract__post_process__100(self):
+        ret = await super()._extract__post_process__100()
+        return {**ret, **dict(content__metadata=None, video_url=None)}
+
+
+class RedTubeExtractor(BaseExtractor):
+    URLS = ["redtube.com"]
+
+    @call_log(logger)
+    async def _extract__title__20(self):
+        context__raw = self._context["content__raw"].decode()
+        title = re.search(r"title: (\".+\")", context__raw).groups()[0]
+        return {"title": json.loads(title)}
+
+    @call_log(logger)
+    async def _extract__metadata__30(self):
+        context__raw = self._context["content__raw"].decode()
+        duration = re.search(r"duration: (\".+\")", context__raw).groups()[0]
+        duration = json.loads(duration)
+        metadata = {"duration": timedelta(seconds=int(duration)).__str__()}
+        return {"metadata": metadata}
+
+    @call_log(logger)
+    async def _extract__image_src__40(self):
+        context__raw = self._context["content__raw"].decode()
+        srcs = []
+        _thumbs = re.search(r"poster: (\".+\")", context__raw).groups()[0]
+        _thumbs = json.loads(_thumbs)
+        srcs.append(GenericMedia(_thumbs))
+        _thumbs = re.search(r"urlPattern: (\".+\")", context__raw).groups()[0]
+        _thumbs = json.loads(_thumbs)
+        u_ = URL(_thumbs)
+        _sq = u_.name
+        _segs = int(re.search(r"\{(.+)}", _sq).groups()[0])
+        for s_ in range(_segs + 1):
+            q_ = u_.parent / _sq.replace("{" + str(_segs) + "}", str(s_))
+            srcs.append(GenericMedia(q_))
+        return {"src_image": srcs}
+
+    @call_log(logger)
+    async def _extract__video_src__50(self):
+        context__raw = self._context["content__raw"].decode()
+        _media_def = re.search(
+            r"mediaDefinition:\s(\[.+]),", context__raw
+        ).groups()[0]
+        _media_def = json.loads(_media_def)
+        m_ = None
+        for m__ in _media_def:
+            if m__["format"] == "mp4":
+                m_ = m__["videoUrl"]
+                break
+        async with AioHttpClient().get(url=m_) as req_:
+            _media_def = await req_.json()
+        srcs = []
+        for m__ in _media_def:
+            srcs.append(
+                GenericMedia(url=m__["videoUrl"], title=m__["quality"] + "p")
+            )
         return {"src_video": srcs}
 
 
