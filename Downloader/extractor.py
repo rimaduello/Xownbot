@@ -79,7 +79,7 @@ class BaseExtractor(AutoCallMixin, metaclass=ABCMeta):
 
 
 class XVideosExtractor(BaseExtractor):
-    URLS = ["xvideos.com"]
+    URLS = ["xvideos.com", "xnxx.com"]
 
     @call_log(logger)
     async def _extract__metadata__30(self):
