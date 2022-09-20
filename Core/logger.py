@@ -2,8 +2,42 @@ import functools
 import inspect
 import logging
 import uuid
+from typing import Callable
 
 from Core.config import Settings
+
+
+def _add_logging_level(level_name, level_num, method_name=None):
+    if not method_name:
+        method_name = level_name.lower()
+
+    if hasattr(logging, level_name):
+        raise AttributeError(
+            "{} already defined in logging module".format(level_name)
+        )
+    if hasattr(logging, method_name):
+        raise AttributeError(
+            "{} already defined in logging module".format(method_name)
+        )
+    if hasattr(logging.getLoggerClass(), method_name):
+        raise AttributeError(
+            "{} already defined in logger class".format(method_name)
+        )
+
+    def log_for_level(self, message, *args, **kwargs):
+        if self.isEnabledFor(level_num):
+            self._log(level_num, message, args, **kwargs)
+
+    def log_to_root(message, *args, **kwargs):
+        logging.log(level_num, message, *args, **kwargs)
+
+    logging.addLevelName(level_num, level_name)
+    setattr(logging, level_name, level_num)
+    setattr(logging.getLoggerClass(), method_name, log_for_level)
+    setattr(logging, method_name, log_to_root)
+
+
+_add_logging_level("TRACE", 5)
 
 
 def get_logger_no(log_level):
@@ -17,12 +51,13 @@ def get_logger(name=None):
     return _logger
 
 
+# noinspection PyUnresolvedReferences
 def call_log(
     logger: logging.Logger,
-    enter_level=logging.DEBUG,
-    exit_level=logging.DEBUG,
-    args_level=logging.DEBUG,
-    ret_level=logging.DEBUG,
+    enter_level=logging.TRACE,
+    exit_level=logging.TRACE,
+    args_level=logging.TRACE,
+    ret_level=logging.TRACE,
 ):
     def _decorator(func):
         func_logger_kwarg = "_function_logger"

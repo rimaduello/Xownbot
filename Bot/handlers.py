@@ -1,11 +1,11 @@
 # todo: pending jobs on startup
+# todo: add directory to /list command report
 
 from __future__ import annotations
 
-import hashlib
+import asyncio
 import logging
 import math
-import os.path
 import tempfile
 from abc import abstractmethod, ABC
 from functools import partial
@@ -15,7 +15,6 @@ from pathlib import Path
 from time import time
 from typing import Union, BinaryIO, Type
 
-import aiofiles
 from telegram import (
     Update,
     Message,
@@ -31,21 +30,13 @@ from telegram.helpers import escape_markdown
 from Core.config import Settings
 from Core.db import Mongo
 from Core.logger import get_logger, call_log
-from Download.downloader import (
-    get_downloader,
-    DOWNLOADER_MAP,
-    BaseDownloader,
-    BaseM3U8Downloader,
-    Source,
-)
-from Download.exception import DownloadException, DownloadError
+from Downloader.downloader import Downloader
+from Downloader.exception import DownloaderException, DownloaderError
 from FileServer.file_server import FileObj, FileResultType
 from TeleDrive.td_client import TeleDriveClient
 from utils.helpers import size_hr
 
 logger = get_logger(__name__)
-
-DownloaderType = Union[BaseDownloader, BaseM3U8Downloader]
 
 
 class LoadingMessage:
@@ -168,24 +159,12 @@ class BaseRequestHandler(BaseHandler, ABC):
             return
         self._log(_function_logger, logging.INFO, f"request_args={req_arg_}")
         msg_, kybrd_ = self.query_options(req_arg_)
-        options_msg = await self.message.reply_text(
+        await self.message.reply_text(
             text=msg_,
             quote=True,
             reply_markup=kybrd_,
             parse_mode=constants.ParseMode.MARKDOWN_V2,
         )
-        self.context.job_queue.run_once(
-            self.cleanup,
-            Settings.BOT_AUTO_DELETE,
-            chat_id=self.update.effective_message.chat_id,
-            data=dict(msg=options_msg, req_arg=req_arg_),
-        )
-
-    @staticmethod
-    @call_log(logger)
-    async def cleanup(context: CallbackContext):
-        data = context.job.data
-        await data["msg"].delete()
 
     @classmethod
     def _query_str(cls, req, *req_arg):
@@ -269,31 +248,30 @@ class BaseQueryHandler(BaseHandler, ABC):
             )
 
 
+# ===========================================================
 class UrlRequestHandle(BaseRequestHandler):
     query_prefix = "u"
-    downloader: DownloaderType = None
 
     def __init__(self, update: Update, context: CallbackContext):
         super(UrlRequestHandle, self).__init__(update=update, context=context)
         self.url = self.message.text
+        self.downloader: Downloader = Downloader(self.url)
 
     async def req_arg_gen(self):
         try:
             async with LoadingMessage(self.message, "please wait ..."):
-                await self.get_or_prepare_downloader()
-        except DownloadException as e:
+                await self.downloader.make_ready()
+        except DownloaderException as e:
             msg = str(e)
             await self.message.reply_text(text=msg, quote=True)
             return
-        md_ = hashlib.md5(self.downloader.url.encode()).hexdigest()
-        self.context.chat_data[md_] = self.downloader
+        md_ = self.downloader.md_hash
         return md_
 
     def query_options(self, req_arg: str):
-        msg_ = f"*{md_escape(self.downloader.name)}*"
+        msg_ = f"*{md_escape(self.downloader.title)}*"
         for k_, v_ in self.downloader.metadata.items():
             msg_ += f"\n⭕ _{md_escape(str(k_))}: {md_escape(str(v_))}_"
-        x: Source
         kybrd_ = [
             [
                 InlineKeyboardButton(
@@ -301,7 +279,7 @@ class UrlRequestHandle(BaseRequestHandler):
                     callback_data=self._query_str("tg", req_arg, c_),
                 )
             ]
-            for c_, x in enumerate(self.downloader.source_list)
+            for c_, x in enumerate(self.downloader.src_video)
         ]
         kybrd_ += [
             [
@@ -310,42 +288,19 @@ class UrlRequestHandle(BaseRequestHandler):
                     callback_data=self._query_str("direct", req_arg, c_),
                 )
             ]
-            for c_, x in enumerate(self.downloader.source_list)
+            for c_, x in enumerate(self.downloader.src_video)
         ]
-        if self.downloader.image_list:
+        if self.downloader.src_image:
             kybrd_.append(
                 [
                     InlineKeyboardButton(
-                        f"images ({len(self.downloader.image_list)})",
+                        f"images ({len(self.downloader.src_image)})",
                         callback_data=self._query_str("image", req_arg),
                     )
                 ]
             )
         kybrd_ = InlineKeyboardMarkup(kybrd_)
         return msg_, kybrd_
-
-    @staticmethod
-    @call_log(logger)
-    async def cleanup(context: CallbackContext):
-        await BaseRequestHandler.cleanup(context)
-        data = context.job.data
-        context.chat_data.pop(data["req_arg"], None)
-
-    @call_log(logger)
-    async def get_or_prepare_downloader(self, _function_logger):
-        try:
-            self.downloader = get_downloader(self.url)
-        except KeyError:
-            self._log(
-                _function_logger,
-                logging.WARNING,
-                f"unsupported website: {self.url}",
-            )
-            return
-        self.downloader.load(not_exist_ok=True)
-        if not self.downloader.is_prepared:
-            await self.downloader.prepare()
-            self.downloader.save()
 
 
 class MediaRequestHandle(BaseRequestHandler):
@@ -374,10 +329,11 @@ class MediaRequestHandle(BaseRequestHandler):
         return msg_, kybrd_
 
 
+# ===========================================================
 class UrlQueryHandle(BaseQueryHandler):
     def __init__(self, update: Update, context: CallbackContext):
         super().__init__(update, context)
-        self.downloader: BaseDownloader = context.chat_data[self.req_arg]
+        self.downloader: Downloader = Downloader.load_from_file(self.req_arg)
 
     @call_log(logger)
     async def image_req(self, _function_logger):
@@ -387,16 +343,21 @@ class UrlQueryHandle(BaseQueryHandler):
             f"image request: {self.file_name}({self.downloader.md_hash})",
         )
         self.loading_bar.bar = False
-        for c_, src_ in enumerate(self.downloader.image_list):
-            with tempfile.NamedTemporaryFile() as f_:
+        with tempfile.TemporaryDirectory() as dir_:
+            tasks_ = [
+                x.download(Path(dir_)) for x in self.downloader.src_image
+            ]
+            results_ = await asyncio.gather(*tasks_, return_exceptions=True)
+            for r_ in results_:
                 try:
-                    await self.downloader.download_image(Path(f_.name), c_)
-                except DownloadError as e:
+                    r_
+                except DownloaderError as e:
                     self._log(_function_logger, logging.ERROR, str(e))
                     continue
-                f_.seek(0)
-                filename = src_.rsplit("/")[-1]
-                await self.handle(f_, filename)
+            for r_ in Path(dir_).iterdir():
+                with r_.open("rb") as r__:
+                    filename = r_.name
+                    await self.handle(r__, filename)
 
     @call_log(logger)
     async def video_req(self, _function_logger):
@@ -407,19 +368,18 @@ class UrlQueryHandle(BaseQueryHandler):
         )
         self.loading_bar.bar = True
         with tempfile.TemporaryDirectory() as dir_:
-            file_path = Path(dir_) / self.downloader.file_name
-            await self.downloader.download_video(
-                self.source_index, file_path, self._update_loading_bar
-            )
+            src_ = self.downloader.src_video[self.source_index]
+            filename = f"{self.downloader.title}{'.' + src_.title if src_.title else ''}{src_.extension}"
+            file_path = Path(dir_) / filename
+            await src_.download(file_path, self._update_loading_bar)
             with open(file_path, "rb") as f_:
-                filename = self.downloader.file_name
                 await self.handle(f_, filename)
 
     @property
     def file_name(self):
-        msg = [self.downloader.name]
+        msg = [self.downloader.title]
         if self.source_index is not None:
-            msg.append(self.downloader.source_list[self.source_index].name)
+            msg.append(self.downloader.src_image[self.source_index].title)
         msg.append(f"({self.req})")
         return " ".join(msg)
 
@@ -461,6 +421,7 @@ class MediaQueryHandle(BaseQueryHandler):
         pass
 
 
+# ===========================================================
 class ToTGMixin:
     async def handle(
         self: BaseQueryHandler, media: Union[BytesIO, BinaryIO], file_name=None
@@ -519,9 +480,10 @@ class ToDirectMixin:
         await data["msg"].delete()
 
 
+# ===========================================================
 class FileListHandle(BaseHandler):
     @staticmethod
-    def _report(_f: FileResultType):
+    def _file_report(_f: FileResultType):
         name = f"[*{escape_markdown(_f['name'], version=2)}*]({_f['url']})"
         size = f"__{escape_markdown(str(_f['size']), version=2)}__"
         ttl = _f["created"] + Settings.FILESERVER_AUTO_DELETE - time()
@@ -529,11 +491,19 @@ class FileListHandle(BaseHandler):
         ttl = f"_{md_escape(ttl)} seconds_"
         return f"➡ {name}\n{size}\n{ttl}\n"
 
+    @staticmethod
+    def _dir_report(_f: FileResultType):
+        name = f"[*Directory*]({_f['url']})"
+        return f"✴ {name}\n"
+
     async def exec(self, _function_logger):
         u_ = self.user_id
         fs_ = await FileObj.user(u_)
         ls_ = fs_.list_files()
-        show_ = [self._report(x) for x in ls_]
+        show_ = [self._dir_report(fs_.get_file(""))] + [
+            self._file_report(x) for x in ls_
+        ]
+
         await self.message.reply_text(
             text="\n".join(show_), parse_mode=constants.ParseMode.MARKDOWN_V2
         )
@@ -556,6 +526,7 @@ async def dummy(_, __):
 
 md_escape = partial(escape_markdown, version=2)
 
+# ===========================================================
 url_request = UrlRequestHandle.run
 media_request = MediaRequestHandle.run
 url_query = UrlQueryHandle.run

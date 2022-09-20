@@ -6,12 +6,10 @@ from pathlib import Path
 from typing import TypedDict, List
 from uuid import uuid4
 
-import aiofiles
-
 from Core.config import Settings
 from Core.db import Mongo
-from FileServer.exception import FileAlreadyExists, FileNotExists
-from utils.helpers import size_hr
+from FileServer.exception import FileNotExists
+from utils.helpers import size_hr, async_move_file
 
 
 class FileResultType(TypedDict):
@@ -91,18 +89,7 @@ class FileObj:
 
     @staticmethod
     async def _save_file(file_read_path: Path, file_write_path: Path):
-        if file_write_path.is_file():
-            raise FileAlreadyExists(file_write_path)
-        if not file_read_path.is_file():
-            raise FileNotExists(file_read_path)
-        chunk_size = 512 * 1024
-        async with aiofiles.open(file_read_path, "rb") as f_read:
-            async with aiofiles.open(file_write_path, "wb") as f_write:
-                while True:
-                    data_ = await f_read.read(chunk_size)
-                    if not data_:
-                        break
-                    await f_write.write(data_)
+        await async_move_file(file_read_path, file_write_path)
 
     @staticmethod
     def _del_file(file_path: Path, missing_ok=True):

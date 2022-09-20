@@ -11,7 +11,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class SettingsCls(BaseSettings):
     BASE_DIR: Path = Field(default=BASE_DIR, const=True)
     BOT_KEY: str
-    BOT_AUTO_DELETE: float = 60 * 10
     BOT_READ_TIMEOUT: float = 5
     BOT_WRITE_TIMEOUT: float = 5
     BOT_POOL_TIMEOUT: float = 5
