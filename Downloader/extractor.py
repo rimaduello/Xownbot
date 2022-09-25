@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import List, Union, Optional, Type
 
 import isodate
+import js2py
 from bs4 import BeautifulSoup
 from yarl import URL
 
@@ -234,26 +235,26 @@ class RedTubeExtractor(BaseExtractor):
 
     @call_log(logger)
     async def _extract__title__20(self):
-        context__raw = self._context["content__raw"].decode()
-        title = re.search(r"title: (\".+\")", context__raw).groups()[0]
+        content__raw = self._context["content__raw"].decode()
+        title = re.search(r"title: (\".+\")", content__raw).groups()[0]
         return {"title": json.loads(title)}
 
     @call_log(logger)
     async def _extract__metadata__30(self):
-        context__raw = self._context["content__raw"].decode()
-        duration = re.search(r"duration: (\".+\")", context__raw).groups()[0]
+        content__raw = self._context["content__raw"].decode()
+        duration = re.search(r"duration: (\".+\")", content__raw).groups()[0]
         duration = json.loads(duration)
         metadata = {"duration": timedelta(seconds=int(duration)).__str__()}
         return {"metadata": metadata}
 
     @call_log(logger)
     async def _extract__image_src__40(self):
-        context__raw = self._context["content__raw"].decode()
+        content__raw = self._context["content__raw"].decode()
         srcs = []
-        _thumbs = re.search(r"poster: (\".+\")", context__raw).groups()[0]
+        _thumbs = re.search(r"poster: (\".+\")", content__raw).groups()[0]
         _thumbs = json.loads(_thumbs)
         srcs.append(GenericMedia(_thumbs))
-        _thumbs = re.search(r"urlPattern: (\".+\")", context__raw).groups()[0]
+        _thumbs = re.search(r"urlPattern: (\".+\")", content__raw).groups()[0]
         _thumbs = json.loads(_thumbs)
         u_ = URL(_thumbs)
         _sq = u_.name
@@ -265,9 +266,9 @@ class RedTubeExtractor(BaseExtractor):
 
     @call_log(logger)
     async def _extract__video_src__50(self):
-        context__raw = self._context["content__raw"].decode()
+        content__raw = self._context["content__raw"].decode()
         _media_def = re.search(
-            r"mediaDefinition:\s(\[.+]),", context__raw
+            r"mediaDefinition:\s(\[.+]),", content__raw
         ).groups()[0]
         _media_def = json.loads(_media_def)
         m_ = None
@@ -282,6 +283,68 @@ class RedTubeExtractor(BaseExtractor):
             srcs.append(
                 GenericMedia(url=m__["videoUrl"], title=m__["quality"] + "p")
             )
+        return {"src_video": srcs}
+
+
+class PornHubExtractor(BaseExtractor):
+    URLS = ["pornhub.com"]
+
+    @call_log(logger)
+    async def _extract__content__10(self):
+        context_1 = await super(PornHubExtractor, self)._extract__content__10()
+        s_ = re.sub(
+            r"flashvars_\d+",
+            "flashvars",
+            context_1["content__bs"].find_all("script")[34].contents[0],
+        )
+        context = js2py.EvalJs({"playerObjList": []})
+        context.execute(s_)
+        flashvars = context.flashvars.to_dict()
+        return {
+            **context_1,
+            **dict(flashvars=flashvars),
+        }
+
+    @call_log(logger)
+    async def _extract__title__20(self):
+        flashvars = self._context["flashvars"]
+        return {"title": flashvars["video_title"]}
+
+    @call_log(logger)
+    async def _extract__metadata__30(self):
+        flashvars = self._context["flashvars"]
+        dur = int(flashvars["video_duration"])
+        dur = timedelta(seconds=dur).__str__()
+        metadata = {"duration": dur}
+        return {"metadata": metadata}
+
+    @call_log(logger)
+    async def _extract__image_src__40(self):
+        # content__raw = self._context["content__raw"].decode()
+        # srcs = []
+        # _thumbs = re.search(r"poster: (\".+\")", content__raw).groups()[0]
+        # _thumbs = json.loads(_thumbs)
+        # srcs.append(GenericMedia(_thumbs))
+        # _thumbs = re.search(r"urlPattern: (\".+\")", content__raw).groups()[0]
+        # _thumbs = json.loads(_thumbs)
+        # u_ = URL(_thumbs)
+        # _sq = u_.name
+        # _segs = int(re.search(r"\{(.+)}", _sq).groups()[0])
+        # for s_ in range(_segs + 1):
+        #     q_ = u_.parent / _sq.replace("{" + str(_segs) + "}", str(s_))
+        #     srcs.append(GenericMedia(q_))
+        # return {"src_image": srcs}
+        return {}
+
+    @call_log(logger)
+    async def _extract__video_src__50(self):
+        flashvars = self._context["flashvars"]
+        m_ = None
+        for m__ in flashvars["mediaDefinitions"]:
+            if m__["format"] == "hls" and isinstance(m__["quality"], list):
+                m_ = m__["videoUrl"]
+                break
+        _, srcs = await M3U8Media.parse_playlist(url=m_)
         return {"src_video": srcs}
 
 
