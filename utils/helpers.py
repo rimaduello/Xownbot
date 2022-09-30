@@ -26,6 +26,17 @@ class AutoCallMixin(object):
             setattr(self, context_key, context_val)
 
 
+class Singleton(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(
+                *args, **kwargs
+            )
+        return cls._instances[cls]
+
+
 def size_hr(val, suffix="B"):
     for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
         if abs(val) < 1024.0:
@@ -36,3 +47,10 @@ def size_hr(val, suffix="B"):
 
 async def async_move_file(src: PathOrStr, target: PathOrStr):
     await asyncio.to_thread(shutil.move, src, target)
+
+
+def stripe_www(host: str):
+    www = "www."
+    if host.startswith("www."):
+        host = host[len(www) :]
+    return host

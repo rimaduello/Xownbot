@@ -7,7 +7,6 @@ from telegram.ext import (
     filters,
     CallbackQueryHandler,
     CommandHandler,
-    BaseHandler,
 )
 
 from Bot import handlers
