@@ -21,7 +21,7 @@ from aiohttp import ClientResponse
 
 from Core.config import Settings
 from Core.logger import get_logger, call_log
-from Downloader.exception import DownloaderError
+from Downloader.exception import Aria2Error
 
 logger = get_logger(__name__)
 
@@ -31,6 +31,7 @@ AriaGID = TypeVar("AriaGID", bound=str)
 class AioHttpClient:
     GET_KEY = "get"
     HEAD_KEY = "head"
+    POST_KEY = "post"
     proxy = Settings.HTTP_PROXY
 
     class _AsyncRequestCall:
@@ -66,6 +67,7 @@ class AioHttpClient:
         _call_map = {
             self.GET_KEY: session.get,
             self.HEAD_KEY: session.head,
+            self.POST_KEY: session.post,
         }
         cl_ = _call_map[fn]
         return cl_
@@ -125,6 +127,9 @@ class AioHttpClient:
     get: Callable[..., ClientResponse] = partialmethod(_call_async, fn=GET_KEY)
     head: Callable[..., ClientResponse] = partialmethod(
         _call_async, fn=HEAD_KEY
+    )
+    post: Callable[..., ClientResponse] = partialmethod(
+        _call_async, fn=POST_KEY
     )
     get_many: Callable[
         ..., AsyncGenerator[ClientResponse, None]
@@ -223,9 +228,7 @@ class Aria2Client:
                             (gids[c_],), ["errorCode", "errorMessage"]
                         )
                     )[0]
-                    raise DownloaderError(
-                        err_["errorCode"], err_["errorMessage"]
-                    )
+                    raise Aria2Error(err_["errorCode"], err_["errorMessage"])
                 is_complete &= s_["status"] == "complete"
             if is_complete:
                 break

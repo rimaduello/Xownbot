@@ -13,7 +13,7 @@ from io import BytesIO
 from logging import Logger
 from pathlib import Path
 from time import time
-from typing import Union, BinaryIO, Type
+from typing import Union, BinaryIO, Type, Optional
 
 from telegram import (
     Update,
@@ -30,8 +30,9 @@ from telegram.helpers import escape_markdown
 from Core.config import Settings
 from Core.db import Mongo
 from Core.logger import get_logger, call_log
-from Downloader.downloader import Downloader
-from Downloader.exception import DownloaderException, DownloaderError
+from Downloader.badownloader import BAClient
+from Downloader.exception import BaseDownloaderException, Aria2Error
+from Downloader.types import BAClientResult
 from FileServer.file_server import FileObj, FileResultType
 from TeleDrive.td_client import TeleDriveClient
 from utils.helpers import size_hr
@@ -90,12 +91,15 @@ class LoadingMessage:
     def text_w_bar(self):
         t_ = md_escape(self.text)
         if self.bar:
-            bar_shapes = math.floor(self.bar_val / 100 * self.BAR_LENGTH)
-            t_ += (
-                f"\n{md_escape('[')}"
-                f"`{md_escape('#') * bar_shapes}{md_escape('-') * (self.BAR_LENGTH - bar_shapes)}`"
-                f"{md_escape(']')} {md_escape(str(int(self.bar_val)) + '%')}"
-            )
+            if isinstance(self.bar_val, str):
+                t_ += f"\n{md_escape(self.bar_val)}"
+            else:
+                bar_shapes = math.floor(self.bar_val / 100 * self.BAR_LENGTH)
+                t_ += (
+                    f"\n{md_escape('[')}"
+                    f"`{md_escape('#') * bar_shapes}{md_escape('-') * (self.BAR_LENGTH - bar_shapes)}`"
+                    f"{md_escape(']')} {md_escape(str(int(self.bar_val)) + '%')}"
+                )
         return t_
 
 
@@ -255,23 +259,26 @@ class UrlRequestHandle(BaseRequestHandler):
     def __init__(self, update: Update, context: CallbackContext):
         super(UrlRequestHandle, self).__init__(update=update, context=context)
         self.url = self.message.text
-        self.downloader: Downloader = Downloader(self.url)
+        self.media_report: Optional[BAClientResult] = None
 
     async def req_arg_gen(self):
+        downloader = BAClient()
         try:
             async with LoadingMessage(self.message, "please wait ..."):
-                await self.downloader.make_ready()
-        except DownloaderException as e:
+                self.media_report = await downloader.get_srcs(self.url)
+        except BaseDownloaderException as e:
             msg = str(e)
             await self.message.reply_text(text=msg, quote=True)
             return
-        md_ = self.downloader.md_hash
-        return md_
+        hash_str = self.media_report.hash
+        self.media_report.save()
+        return hash_str
 
     def query_options(self, req_arg: str):
-        msg_ = f"*{md_escape(self.downloader.title)}*"
-        for k_, v_ in self.downloader.metadata.items():
+        msg_ = f"*{md_escape(self.media_report.title)}*"
+        for k_, v_ in self.media_report.metadata.items():
             msg_ += f"\n⭕ _{md_escape(str(k_))}: {md_escape(str(v_))}_"
+        media_index = [(c_, x) for c_, x in enumerate(self.media_report.video)]
         kybrd_ = [
             [
                 InlineKeyboardButton(
@@ -279,7 +286,7 @@ class UrlRequestHandle(BaseRequestHandler):
                     callback_data=self._query_str("tg", req_arg, c_),
                 )
             ]
-            for c_, x in enumerate(self.downloader.src_video)
+            for c_, x in media_index
         ]
         kybrd_ += [
             [
@@ -288,13 +295,13 @@ class UrlRequestHandle(BaseRequestHandler):
                     callback_data=self._query_str("direct", req_arg, c_),
                 )
             ]
-            for c_, x in enumerate(self.downloader.src_video)
+            for c_, x in media_index
         ]
-        if self.downloader.src_image:
+        if self.media_report.image:
             kybrd_.append(
                 [
                     InlineKeyboardButton(
-                        f"images ({len(self.downloader.src_image)})",
+                        f"images ({len(self.media_report.image)})",
                         callback_data=self._query_str("image", req_arg),
                     )
                 ]
@@ -333,25 +340,26 @@ class MediaRequestHandle(BaseRequestHandler):
 class UrlQueryHandle(BaseQueryHandler):
     def __init__(self, update: Update, context: CallbackContext):
         super().__init__(update, context)
-        self.downloader: Downloader = Downloader.load_from_file(self.req_arg)
+        self.media_report: BAClientResult = BAClientResult.load(self.req_arg)
 
     @call_log(logger)
     async def image_req(self, _function_logger):
         self._log(
             _function_logger,
             logging.INFO,
-            f"image request: {self.file_name}({self.downloader.md_hash})",
+            f"image request: {self.file_name}({self.media_report.hash})",
         )
         self.loading_bar.bar = False
         with tempfile.TemporaryDirectory() as dir_:
             tasks_ = [
-                x.download(Path(dir_)) for x in self.downloader.src_image
+                x.download(Path(dir_) / f"{c_}{x.extension}")
+                for c_, x in enumerate(self.media_report.image)
             ]
             results_ = await asyncio.gather(*tasks_, return_exceptions=True)
             for r_ in results_:
                 try:
                     r_
-                except DownloaderError as e:
+                except Aria2Error as e:
                     self._log(_function_logger, logging.ERROR, str(e))
                     continue
             for r_ in Path(dir_).iterdir():
@@ -364,12 +372,12 @@ class UrlQueryHandle(BaseQueryHandler):
         self._log(
             _function_logger,
             logging.INFO,
-            f"video request: {self.file_name}({self.downloader.md_hash})",
+            f"video request: {self.file_name}({self.media_report.hash})",
         )
         self.loading_bar.bar = True
         with tempfile.TemporaryDirectory() as dir_:
-            src_ = self.downloader.src_video[self.source_index]
-            filename = f"{self.downloader.title}{'.' + src_.title if src_.title else ''}{src_.extension}"
+            src_ = self.media_report.video[self.source_index]
+            filename = f"{self.media_report.title}{'.' + src_.title if src_.title else ''}{src_.extension}"
             file_path = Path(dir_) / filename
             await src_.download(file_path, self._update_loading_bar)
             with open(file_path, "rb") as f_:
@@ -377,9 +385,9 @@ class UrlQueryHandle(BaseQueryHandler):
 
     @property
     def file_name(self):
-        msg = [self.downloader.title]
+        msg = [self.media_report.title]
         if self.source_index is not None:
-            msg.append(self.downloader.src_image[self.source_index].title)
+            msg.append(self.media_report.video[self.source_index].title)
         msg.append(f"({self.req})")
         return " ".join(msg)
 
@@ -388,8 +396,8 @@ class UrlQueryHandle(BaseQueryHandler):
         pass
 
     async def _update_loading_bar(self, total, complete):
-        if total == 0:
-            val = 0
+        if total <= 0:
+            val = size_hr(complete)
         else:
             val = complete / total * 100
         await self.loading_bar.update_bar_absolute(val)
